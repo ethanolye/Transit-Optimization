@@ -328,6 +328,13 @@
         popupAnchor: [0, -20]
     });
 
+    const upTrainIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.train-body{fill:%239a3412;stroke:%237c2d12;stroke-width:2;}.train-window{fill:%23fde68a;stroke:%237c2d12;stroke-width:1.5;}.train-wheel{fill:%23333;stroke:%23000;stroke-width:1.5;}</style></defs><path class="train-body" d="M 20 30 L 30 25 L 70 25 L 80 30 L 80 50 L 20 50 Z"/><rect class="train-window" x="28" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="48" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="68" y="28" width="8" height="10" rx="1"/><circle class="train-wheel" cx="30" cy="60" r="8"/><circle class="train-wheel" cx="70" cy="60" r="8"/></svg>',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20]
+    });
+
     // TTC Icons - Red
     const ttcBusIcon = L.icon({
         iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.ttc-bus-body{fill:%23dc2626;stroke:%23991b1b;stroke-width:2;}.ttc-bus-window{fill:%2387ceeb;stroke:%23991b1b;stroke-width:1.5;}.ttc-bus-door{fill:%23f97316;stroke:%23991b1b;stroke-width:1.5;}.ttc-bus-wheel{fill:%23333;stroke:%23000;stroke-width:1;}</style></defs><rect class="ttc-bus-body" x="15" y="25" width="70" height="40" rx="5"/><rect class="ttc-bus-window" x="22" y="30" width="15" height="12" rx="2"/><rect class="ttc-bus-window" x="42" y="30" width="15" height="12" rx="2"/><rect class="ttc-bus-door" x="65" y="30" width="13" height="20" rx="2"/><circle class="ttc-bus-wheel" cx="28" cy="68" r="7"/><circle class="ttc-bus-wheel" cx="72" cy="68" r="7"/></svg>',
@@ -712,6 +719,9 @@
             if (v.agency === "TTC") {
                 // TTC uses red icons
                 icon = v.vehicle_subtype === "streetcar" ? ttcStreetcarIcon : ttcBusIcon;
+            } else if (v.agency === "UP") {
+                // UP Express uses brown train icon
+                icon = upTrainIcon;
             } else {
                 // GO Transit, YRT use green icons
                 icon = v.vehicle_type === "train" ? trainIcon : busIcon;

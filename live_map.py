@@ -22,6 +22,11 @@ GO_VEHICLE_URL = (
     "api/V1/Gtfs/Feed/VehiclePosition"
 )
 
+UP_VEHICLE_URL = (
+    "https://api.openmetrolinx.com/OpenDataAPI/"
+    "api/V1/UP/Gtfs/Feed/VehiclePosition"
+)
+
 TTC_VEHICLE_URL = (
     "https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc"
 )
@@ -218,6 +223,20 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                     "vehicle_subtype": vehicle_subtype
                 }
 
+    return None
+
+
+def infer_agency_for_route(route_id):
+    """Infer agency for a route_id by checking loaded GTFS routes (prefer UP then GO)."""
+    if not route_id:
+        return None
+    for agency in ["UP", "GO"]:
+        if agency not in GTFS_DATA:
+            continue
+        routes = GTFS_DATA[agency]["routes"]
+        match = routes[routes['route_id'].astype(str) == str(route_id)]
+        if not match.empty:
+            return agency
     return None
 
 
@@ -645,7 +664,10 @@ def vehicles():
             route_id = trip.get("route_id", "")
 
             # Cross-reference with GTFS
-            trip_info = get_trip_info(trip_id, route_id, "GO") if (trip_id or route_id) else None
+            preferred_agency = infer_agency_for_route(route_id) or "GO"
+            trip_info = get_trip_info(trip_id, route_id, preferred_agency) if (trip_id or route_id) else None
+            if not trip_info and (trip_id or route_id):
+                trip_info = get_trip_info(trip_id, route_id)
 
             vehicle_data = {
                 "lat": float(v["position"]["latitude"]),
@@ -673,6 +695,56 @@ def vehicles():
             output.append(vehicle_data)
     except Exception as e:
         logging.error("Error fetching GO Transit vehicles: %s", e)
+
+    # Fetch UP Express vehicles
+    try:
+        if not API_KEY:
+            raise ValueError("Missing UP API key")
+
+        r = requests.get(
+            UP_VEHICLE_URL,
+            params={"key": API_KEY},
+            timeout=5
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        for entity in data.get("entity", []):
+            v = entity.get("vehicle")
+            if not v or "position" not in v:
+                continue
+
+            trip = v.get("trip", {})
+            trip_id = trip.get("trip_id", "")
+            route_id = trip.get("route_id", "")
+
+            # Cross-reference with GTFS
+            trip_info = get_trip_info(trip_id, route_id, "UP") if (trip_id or route_id) else None
+
+            vehicle_data = {
+                "lat": float(v["position"]["latitude"]),
+                "lon": float(v["position"]["longitude"]),
+                "route": route_id,
+                "trip": trip_id
+            }
+
+            if trip_info:
+                vehicle_data.update({
+                    "route_long_name": trip_info["route_long_name"],
+                    "route_short_name": trip_info["route_short_name"],
+                    "destination": trip_info["destination"],
+                    "agency": trip_info["agency"],
+                    "vehicle_type": trip_info["vehicle_type"],
+                    "vehicle_subtype": trip_info.get("vehicle_subtype", "train")
+                })
+            else:
+                vehicle_data["agency"] = "UP"
+                vehicle_data["vehicle_type"] = "train"
+                vehicle_data["vehicle_subtype"] = "train"
+
+            output.append(vehicle_data)
+    except Exception as e:
+        logging.error("Error fetching UP Express vehicles: %s", e)
 
     # Fetch TTC vehicles
     try:
