@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Transit Schedule Viewer</title>
+    <title>Transit Optimization | Schedule Studio</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
         * {
@@ -13,7 +13,7 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #0f766e 100%);
             min-height: 100vh;
             padding: 20px;
         }
@@ -45,7 +45,7 @@
         }
 
         .header h1 {
-            color: #1e3a8a;
+            color: #0f172a;
             margin-bottom: 10px;
             font-size: 2.5em;
         }
@@ -56,7 +56,7 @@
         }
 
         .current-time-box {
-            background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+            background: linear-gradient(135deg, #0f766e 0%, #0f172a 100%);
             color: white;
             padding: 20px 30px;
             border-radius: 12px;
@@ -86,7 +86,7 @@
 
         .nav-buttons a, .nav-buttons button {
             padding: 12px 28px;
-            background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+            background: linear-gradient(135deg, #0f766e 0%, #0f172a 100%);
             color: white;
             text-decoration: none;
             border-radius: 10px;
@@ -102,7 +102,7 @@
         }
 
         .nav-buttons a:hover, .nav-buttons button:hover {
-            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+            background: linear-gradient(135deg, #0d9488 0%, #0f172a 100%);
             transform: translateY(-3px);
             box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
         }
@@ -115,7 +115,7 @@
 
         .confirm-btn {
             padding: 12px 28px;
-            background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+            background: linear-gradient(135deg, #0f766e 0%, #0f172a 100%);
             color: white;
             border: none;
             border-radius: 10px;
@@ -128,9 +128,22 @@
         }
 
         .confirm-btn:hover {
-            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+            background: linear-gradient(135deg, #0d9488 0%, #0f172a 100%);
             transform: translateY(-3px);
             box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
+        }
+
+        .brand-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(15, 118, 110, 0.12);
+            color: #0f766e;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            margin-bottom: 10px;
         }
 
         .filters {
@@ -535,8 +548,9 @@
         <div class="header">
             <div class="header-top">
                 <div class="header-title">
-                    <h1><i class="fas fa-clock"></i> Transit Schedule Viewer</h1>
-                    <p class="subtitle">View real-time transit schedules for upcoming departures</p>
+                    <div class="brand-badge"><i class="fas fa-route"></i> Transit Optimization</div>
+                    <h1><i class="fas fa-clock"></i> Schedule Studio</h1>
+                    <p class="subtitle">Plan smarter departures across TTC, GO, and UP in one place</p>
                 </div>
                 <div class="current-time-box">
                     <div class="time" id="currentTime">--:--:--</div>
@@ -544,7 +558,7 @@
                 </div>
             </div>
             <div class="nav-buttons">
-                <a href="/"><i class="fas fa-map"></i> Live Vehicle Map</a>
+                <a href="/"><i class="fas fa-map"></i> Live Fleet Map</a>
                 <button onclick="window.location.reload()"><i class="fas fa-sync"></i> Refresh Schedules</button>
             </div>
         </div>

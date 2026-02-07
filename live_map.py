@@ -587,6 +587,37 @@ def api_schedule(agency, route_id, direction, stop_sequence):
     })
 
 
+@app.route("/api/stop-connections/<agency>/<path:stop_id>")
+def api_stop_connections(agency, stop_id):
+    """Return transfer connections (routes) available at a stop"""
+    if agency not in GTFS_DATA:
+        return jsonify({"error": "Agency not found"}), 404
+
+    data = GTFS_DATA[agency]
+    stop_times = data["stop_times"]
+    trips = data["trips"]
+    routes = data["routes"]
+
+    trip_ids = stop_times[stop_times['stop_id'].astype(str) == str(stop_id)]['trip_id'].unique()
+    if len(trip_ids) == 0:
+        return jsonify({"routes": []})
+
+    route_ids = trips[trips['trip_id'].isin(trip_ids)]['route_id'].unique()
+    route_rows = routes[routes['route_id'].isin(route_ids)]
+
+    results = []
+    for _, row in route_rows.iterrows():
+        results.append({
+            "route_id": to_python_type(row.get('route_id')),
+            "route_short_name": to_python_type(row.get('route_short_name')),
+            "route_long_name": to_python_type(row.get('route_long_name'))
+        })
+
+    results.sort(key=lambda r: (str(r.get('route_short_name') or ""), str(r.get('route_long_name') or "")))
+
+    return jsonify({"routes": results})
+
+
 @app.route("/vehicles")
 def vehicles():
     output = []
