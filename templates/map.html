@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>GO Live Vehicles</title>
+
+    <style>
+        html, body, #map {
+            height: 100%;
+            margin: 0;
+        }
+
+        .nav-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1001;
+            background: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            text-decoration: none;
+            color: #333;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .nav-button:hover {
+            background: #667eea;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        #sidebar {
+            position: fixed;
+            right: -400px;
+            top: 0;
+            width: 400px;
+            height: 100%;
+            background: white;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.2);
+            transition: right 0.3s ease;
+            overflow-y: auto;
+            z-index: 1000;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #sidebar.open {
+            right: 0;
+        }
+
+        .sidebar-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .sidebar-close:hover {
+            color: #000;
+        }
+
+        .sidebar-header {
+            margin-top: 30px;
+            margin-bottom: 20px;
+        }
+
+        .sidebar-header h2 {
+            margin: 0 0 5px 0;
+            font-size: 20px;
+            color: #333;
+        }
+
+        .sidebar-header p {
+            margin: 5px 0;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .stops-section {
+            margin-top: 20px;
+        }
+
+        .stops-section h3 {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 16px;
+            color: #333;
+        }
+
+        .stop-item {
+            background: #f5f5f5;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #22c55e;
+        }
+
+        .stop-item.current {
+            background: #e0f7e3;
+            border-left-color: #16a34a;
+        }
+
+        .stop-item.next {
+            background: #fef3c7;
+            border-left-color: #f59e0b;
+        }
+
+        .stop-name {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .stop-time {
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+    </script>
+</head>
+
+<body>
+<a href="/schedule" class="nav-button">
+    <i class="fas fa-clock"></i> Schedule Viewer
+</a>
+
+<div id="map"></div>
+
+<div id="sidebar">
+    <span class="sidebar-close" onclick="closeSidebar()">&times;</span>
+    <div class="sidebar-header">
+        <h2 id="route-name">Route Name</h2>
+        <p id="destination">Destination</p>
+    </div>
+    <div class="stops-section">
+        <h3>Schedule</h3>
+        <div id="stops-list"></div>
+    </div>
+</div>
+
+<script>
+    const map = L.map("map").setView([43.65, -79.38], 10);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19
+    }).addTo(map);
+
+    // Custom icons for vehicles - Green (GO Transit)
+    const busIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.bus-body{fill:%2322c55e;stroke:%23166534;stroke-width:2;}.bus-window{fill:%2387ceeb;stroke:%23166534;stroke-width:1.5;}.bus-door{fill:%23f97316;stroke:%23166534;stroke-width:1.5;}.bus-wheel{fill:%23333;stroke:%23000;stroke-width:1;}</style></defs><rect class="bus-body" x="15" y="25" width="70" height="40" rx="5"/><rect class="bus-window" x="22" y="30" width="15" height="12" rx="2"/><rect class="bus-window" x="42" y="30" width="15" height="12" rx="2"/><rect class="bus-door" x="65" y="30" width="13" height="20" rx="2"/><circle class="bus-wheel" cx="28" cy="68" r="7"/><circle class="bus-wheel" cx="72" cy="68" r="7"/></svg>',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20]
+    });
+
+    const trainIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.train-body{fill:%2322c55e;stroke:%23166534;stroke-width:2;}.train-window{fill:%2387ceeb;stroke:%23166534;stroke-width:1.5;}.train-wheel{fill:%23333;stroke:%23000;stroke-width:1.5;}</style></defs><path class="train-body" d="M 20 30 L 30 25 L 70 25 L 80 30 L 80 50 L 20 50 Z"/><rect class="train-window" x="28" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="48" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="68" y="28" width="8" height="10" rx="1"/><circle class="train-wheel" cx="30" cy="60" r="8"/><circle class="train-wheel" cx="70" cy="60" r="8"/></svg>',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20]
+    });
+
+    // TTC Icons - Red
+    const ttcBusIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.ttc-bus-body{fill:%23dc2626;stroke:%23991b1b;stroke-width:2;}.ttc-bus-window{fill:%2387ceeb;stroke:%23991b1b;stroke-width:1.5;}.ttc-bus-door{fill:%23f97316;stroke:%23991b1b;stroke-width:1.5;}.ttc-bus-wheel{fill:%23333;stroke:%23000;stroke-width:1;}</style></defs><rect class="ttc-bus-body" x="15" y="25" width="70" height="40" rx="5"/><rect class="ttc-bus-window" x="22" y="30" width="15" height="12" rx="2"/><rect class="ttc-bus-window" x="42" y="30" width="15" height="12" rx="2"/><rect class="ttc-bus-door" x="65" y="30" width="13" height="20" rx="2"/><circle class="ttc-bus-wheel" cx="28" cy="68" r="7"/><circle class="ttc-bus-wheel" cx="72" cy="68" r="7"/></svg>',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20]
+    });
+
+    const ttcStreetcarIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.ttc-streetcar-body{fill:%23dc2626;stroke:%23991b1b;stroke-width:2;}.ttc-streetcar-window{fill:%2387ceeb;stroke:%23991b1b;stroke-width:1.5;}.ttc-streetcar-wheel{fill:%23333;stroke:%23000;stroke-width:1.5;}</style></defs><path class="ttc-streetcar-body" d="M 15 30 L 20 25 L 80 25 L 85 30 L 85 50 L 15 50 Z"/><rect class="ttc-streetcar-window" x="25" y="28" width="12" height="10" rx="1"/><rect class="ttc-streetcar-window" x="45" y="28" width="12" height="10" rx="1"/><rect class="ttc-streetcar-window" x="65" y="28" width="12" height="10" rx="1"/><circle class="ttc-streetcar-wheel" cx="28" cy="60" r="7"/><circle class="ttc-streetcar-wheel" cx="72" cy="60" r="7"/></svg>',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -20]
+    });
+
+    // Stop marker icons
+    const stopIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="35" fill="%23fbbf24" stroke="%23d97706" stroke-width="3"/><circle cx="50" cy="50" r="20" fill="%23fff" opacity="0.7"/></svg>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        popupAnchor: [0, -10]
+    });
+
+    const currentStopIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="%2316a34a" stroke="%23166534" stroke-width="3"/><circle cx="50" cy="50" r="25" fill="%2386efac" opacity="0.8"/></svg>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+        popupAnchor: [0, -12]
+    });
+
+    let markers = [];
+    let routeLines = [];
+
+    function closeSidebar() {
+        document.getElementById("sidebar").classList.remove("open");
+    }
+
+    function clearRouteLines() {
+        routeLines.forEach(line => map.removeLayer(line));
+        routeLines = [];
+    }
+
+    function drawRoutePath(stops, shape, vehicleLat, vehicleLon) {
+        // Draw the route with traveled portion in light color and remaining in solid color
+        // Use shape data if available (actual route), otherwise fall back to stops
+        const routeCoords = shape && shape.length > 0 ? shape : stops;
+        
+        if (routeCoords.length < 2) return;
+
+        // Find closest point to current vehicle position
+        let closestIdx = 0;
+        let minDistance = Infinity;
+
+        routeCoords.forEach((point, idx) => {
+            const distance = Math.sqrt(
+                Math.pow(point.lat - vehicleLat, 2) + 
+                Math.pow(point.lon - vehicleLon, 2)
+            );
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestIdx = idx;
+            }
+        });
+
+        // Build coordinates for traveled portion (light gray)
+        if (closestIdx > 0) {
+            const traveledCoords = routeCoords.slice(0, closestIdx + 1).map(point => [point.lat, point.lon]);
+            const traveledLine = L.polyline(traveledCoords, {
+                color: '#d1d5db',
+                weight: 4,
+                opacity: 0.6,
+                dashArray: '5, 5'
+            }).addTo(map);
+            routeLines.push(traveledLine);
+        }
+
+        // Build coordinates for remaining portion (solid blue)
+        if (closestIdx < routeCoords.length - 1) {
+            const remainingCoords = routeCoords.slice(closestIdx).map(point => [point.lat, point.lon]);
+            const remainingLine = L.polyline(remainingCoords, {
+                color: '#3b82f6',
+                weight: 4,
+                opacity: 0.8
+            }).addTo(map);
+            routeLines.push(remainingLine);
+        }
+
+        // Add stop markers
+        const currentTime = new Date();
+        const currentSeconds = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
+
+        stops.forEach((stop, idx) => {
+            // Determine if this is the current stop
+            const [h, m, s] = stop.arrival_time.split(":").map(Number);
+            const stopSeconds = h * 3600 + m * 60 + s;
+            
+            const isCurrent = stopSeconds <= currentSeconds && (idx === stops.length - 1 || stops[idx + 1].arrival_time.split(":").map(Number)[0] * 3600 + stops[idx + 1].arrival_time.split(":").map(Number)[1] * 60 + stops[idx + 1].arrival_time.split(":").map(Number)[2] > currentSeconds);
+            
+            const stopMarker = L.marker(
+                [stop.lat, stop.lon],
+                { icon: isCurrent ? currentStopIcon : stopIcon }
+            ).addTo(map);
+
+            stopMarker.bindPopup(`
+                <b>${stop.stop_name}</b><br>
+                Arrival: ${stop.arrival_time}<br>
+                Depart: ${stop.departure_time}
+            `);
+
+            routeLines.push(stopMarker);
+        });
+    }
+
+    async function openSidebar(tripId, vehicleLat, vehicleLon, routeId, agency) {
+        try {
+            // Build URL with route_id query param if available
+            let url = `/trip/${tripId}`;
+            if (routeId) {
+                url += `?route_id=${routeId}`;
+            }
+            if (agency) {
+                url += routeId ? `&agency=${agency}` : `?agency=${agency}`;
+            }
+            
+            const res = await fetch(url);
+            const data = await res.json();
+
+            // Clear previous route lines
+            clearRouteLines();
+
+            // Draw route path using shape data if available
+            drawRoutePath(data.stops, data.shape, vehicleLat, vehicleLon);
+
+            // Set header info
+            if (data.info) {
+                document.getElementById("route-name").textContent = data.info.route_long_name || data.info.route_id;
+                document.getElementById("destination").textContent = data.info.destination || "Unknown";
+            }
+
+            // Build stops list
+            const stopsList = document.getElementById("stops-list");
+            stopsList.innerHTML = "";
+
+            const currentTime = new Date();
+            const currentSeconds = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
+
+            data.stops.forEach((stop, idx) => {
+                const stopDiv = document.createElement("div");
+                stopDiv.className = "stop-item";
+
+                // Parse arrival time - handle "N/A" for route-only data
+                if (stop.arrival_time === "N/A") {
+                    stopDiv.innerHTML = `<strong>${stop.stop_name}</strong><br><small style="color: #999;">Stop sequence: ${stop.stop_sequence}</small>`;
+                } else {
+                    const [h, m, s] = stop.arrival_time.split(":").map(Number);
+                    const stopSeconds = h * 3600 + m * 60 + s;
+
+                    // Determine if this is current or next stop
+                    if (idx > 0 && stopSeconds > currentSeconds) {
+                        const prevStop = data.stops[idx - 1];
+                        const [ph, pm, ps] = prevStop.arrival_time.split(":").map(Number);
+                        const prevSeconds = ph * 3600 + pm * 60 + ps;
+                        if (prevSeconds <= currentSeconds) {
+                            stopDiv.classList.add("current");
+                        }
+                    }
+
+                    if (stopSeconds > currentSeconds && (idx === 0 || data.stops[idx - 1].arrival_time.split(":").map(Number)[0] * 3600 + data.stops[idx - 1].arrival_time.split(":").map(Number)[1] * 60 + data.stops[idx - 1].arrival_time.split(":").map(Number)[2] <= currentSeconds)) {
+                        stopDiv.classList.add("next");
+                    }
+
+                    stopDiv.innerHTML = `
+                        <div class="stop-name">${stop.stop_name}</div>
+                        <div class="stop-time">Arrival: ${stop.arrival_time} | Depart: ${stop.departure_time}</div>
+                    `;
+                }
+
+                stopsList.appendChild(stopDiv);
+            });
+
+            // Open sidebar
+            document.getElementById("sidebar").classList.add("open");
+        } catch (error) {
+            console.error("Error loading trip details:", error);
+        }
+    }
+
+    async function updateVehicles() {
+        const res = await fetch("/vehicles");
+        const vehicles = await res.json();
+
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        vehicles.forEach(v => {
+            // Select icon based on agency and vehicle type
+            let icon;
+            if (v.agency === "TTC") {
+                // TTC uses red icons
+                icon = v.vehicle_subtype === "streetcar" ? ttcStreetcarIcon : ttcBusIcon;
+            } else {
+                // GO Transit, YRT use green icons
+                icon = v.vehicle_type === "train" ? trainIcon : busIcon;
+            }
+
+            const marker = L.marker(
+                [v.lat, v.lon],
+                { icon: icon }
+            ).addTo(map);
+
+            // Show only route name and destination on click
+            let popupContent = `
+                <b>${v.route_long_name || v.route}</b><br>
+                ${v.destination || 'Unknown Destination'}<br>
+                <a href="#" onclick="openSidebar('${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
+            `;
+            
+            marker.bindPopup(popupContent);
+
+            // Open sidebar on marker click
+            marker.on("click", function() {
+                openSidebar(v.trip, v.lat, v.lon, v.route, v.agency);
+            });
+
+            markers.push(marker);
+        });
+    }
+
+    updateVehicles();
+    setInterval(updateVehicles, 5000);
+</script>
+</body>
+</html>
