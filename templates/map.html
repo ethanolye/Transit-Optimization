@@ -374,6 +374,8 @@
         GO: true,
         UP: true
     };
+    let vehiclesCache = [];  // Cache vehicle data to avoid refetching on UI changes
+    let vehicleMarkers = {};  // Map vehicle keys to their markers for faster show/hide
 
     const stopPinIcon = L.icon({
         iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M32 2C20.4 2 11 11.4 11 23c0 14.4 18.7 36.2 19.5 37.1.8.9 2.2.9 3 0C34.3 59.2 53 37.4 53 23 53 11.4 43.6 2 32 2zm0 30a9 9 0 1 1 0-18 9 9 0 0 1 0 18z" fill="%23ef4444" stroke="%23991b1b" stroke-width="2"/></svg>',
@@ -390,7 +392,8 @@
             map.removeLayer(selectedStopMarker);
             selectedStopMarker = null;
         }
-        updateVehicles();
+        // Render vehicles from cache instead of fetching - much faster
+        renderVehicles(vehiclesCache);
     }
 
     document.addEventListener("keydown", (event) => {
@@ -406,7 +409,8 @@
     function selectVehicle(key, tripId, lat, lon, routeId, agency) {
         selectedVehicleKey = key;
         openSidebar(tripId, lat, lon, routeId, agency);
-        updateVehicles();
+        // Render vehicles from cache instead of fetching - much faster
+        renderVehicles(vehiclesCache);
     }
 
     function initAgencyFilters() {
@@ -421,21 +425,21 @@
         if (filterTtc) {
             filterTtc.addEventListener("change", () => {
                 agencyFilters.TTC = filterTtc.checked;
-                updateVehicles();
+                renderVehicles(vehiclesCache);
             });
         }
 
         if (filterGo) {
             filterGo.addEventListener("change", () => {
                 agencyFilters.GO = filterGo.checked;
-                updateVehicles();
+                renderVehicles(vehiclesCache);
             });
         }
 
         if (filterUp) {
             filterUp.addEventListener("change", () => {
                 agencyFilters.UP = filterUp.checked;
-                updateVehicles();
+                renderVehicles(vehiclesCache);
             });
         }
 
@@ -445,7 +449,7 @@
                 if (filterTtc) filterTtc.checked = true;
                 if (filterGo) filterGo.checked = true;
                 if (filterUp) filterUp.checked = true;
-                updateVehicles();
+                renderVehicles(vehiclesCache);
             });
         }
 
@@ -455,7 +459,7 @@
                 if (filterTtc) filterTtc.checked = false;
                 if (filterGo) filterGo.checked = false;
                 if (filterUp) filterUp.checked = false;
-                updateVehicles();
+                renderVehicles(vehiclesCache);
             });
         }
 
@@ -565,12 +569,53 @@
 
             stopMarker.bindPopup(`
                 <b>${stop.stop_name}</b><br>
-                Arrival: ${stop.arrival_time}<br>
-                Depart: ${stop.departure_time}
+                Arrival: ${formatTime(stop.arrival_time)}<br>
+                Depart: ${formatTime(stop.departure_time)}
             `);
 
             routeLines.push(stopMarker);
         });
+    }
+
+    function formatTime(timeString, currentTime = null) {
+        // Format time string, handling times >= 24:00 (next day) by showing +1 day, +2 days, etc.
+        // Only show "+1 day" if the time in the schedule is actually >= 24:00 (encoded as next day in GTFS)
+        if (!timeString || timeString === "N/A") return timeString;
+        
+        const [h, m, s] = timeString.split(":").map(Number);
+        
+        // Only mark as next day if hours >= 24 (GTFS encoding for next-day times)
+        if (h < 24) {
+            // Time is within the same day (00:00-23:59)
+            return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        }
+        
+        // Time is >= 24:00, indicating next day or later
+        let hours = h;
+        let days = 0;
+        
+        // Calculate which day
+        while (hours >= 24) {
+            days++;
+            hours -= 24;
+        }
+        
+        // Format time with day indicator
+        const formattedTime = `${String(hours).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        return `${formattedTime} +${days} day${days > 1 ? 's' : ''}`;
+    }
+
+    async function getGOTransitPredictions(stopCode) {
+        // Fetch GO Transit stop predictions
+        try {
+            const res = await fetch(`/api/go-transit-stop/${stopCode}`);
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data;
+        } catch (error) {
+            console.error("Error fetching GO Transit predictions:", error);
+            return null;
+        }
     }
 
     async function openSidebar(tripId, vehicleLat, vehicleLon, routeId, agency) {
@@ -606,7 +651,9 @@
             const currentTime = new Date();
             const currentSeconds = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
 
-            data.stops.forEach((stop, idx) => {
+            // For each stop, fetch GO Transit predictions if this is a GO vehicle
+            for (let idx = 0; idx < data.stops.length; idx++) {
+                const stop = data.stops[idx];
                 const stopDiv = document.createElement("div");
                 stopDiv.className = "stop-item";
 
@@ -639,10 +686,106 @@
                         stopDiv.classList.remove("upcoming");
                     }
 
+                    // Default to showing just the scheduled time
+                    const scheduledTime = formatTime(stop.arrival_time);
                     stopDiv.innerHTML = `
                         <div class="stop-name">${stop.stop_name}</div>
-                        <div class="stop-time">Arrival: ${stop.arrival_time} | Depart: ${stop.departure_time}</div>
+                        <div class="stop-time">Scheduled: ${scheduledTime}</div>
                     `;
+                    
+                    // For GO Transit, fetch predictions asynchronously for upcoming stops only
+                    if (agency === "GO" && stop.stop_code && stopSeconds >= currentSeconds) {
+                        console.log(`Fetching predictions for GO stop ${stop.stop_code} (${stop.stop_name})`);
+                        
+                        getGOTransitPredictions(stop.stop_code).then(predictions => {
+                            console.log(`Received predictions for stop ${stop.stop_code}:`, predictions);
+                            
+                            if (predictions && predictions.predictions && predictions.predictions.length > 0) {
+                                console.log(`Stop ${stop.stop_code} has ${predictions.predictions.length} predictions`);
+                                console.log(`Looking for route: "${routeId}"`);
+                                
+                                // Try to find a matching prediction for this route
+                                const routePrediction = predictions.predictions.find(p => {
+                                    const pRouteId = String(p.route_id || '').toLowerCase();
+                                    const pRouteNum = String(p.route_number || '').toLowerCase();
+                                    const pLineName = String(p.line_name || '').toLowerCase();
+                                    const searchRoute = String(routeId || '').toLowerCase();
+                                    
+                                    console.log(`Checking prediction: route_id=${pRouteId}, route_num=${pRouteNum}, line_name=${pLineName} vs search=${searchRoute}`);
+                                    
+                                    return pRouteId === searchRoute || 
+                                           pRouteNum === searchRoute ||
+                                           pLineName.includes(searchRoute) ||
+                                           searchRoute.includes(pRouteId) ||
+                                           searchRoute.includes(pRouteNum);
+                                });
+                                
+                                if (routePrediction && routePrediction.predicted_time) {
+                                    console.log(`✓ Found matching prediction:`, routePrediction);
+                                    
+                                    // Parse time - handle both HH:MM:SS and ISO datetime formats
+                                    let predTimeStr = routePrediction.predicted_time;
+                                    if (predTimeStr.includes('T')) {
+                                        // ISO datetime format - extract time part
+                                        const date = new Date(predTimeStr);
+                                        predTimeStr = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:00`;
+                                    }
+                                    
+                                    const predTime = formatTime(predTimeStr);
+                                    const [ph, pm] = predTimeStr.split(":").map(Number);
+                                    const predSeconds = ph * 3600 + pm * 60;
+                                    const timeDiff = predSeconds - stopSeconds;
+                                    
+                                    // Color code based on early/on-time/late
+                                    let timeColor = "#666";
+                                    let status = "";
+                                    
+                                    if (Math.abs(timeDiff) <= 60) {
+                                        timeColor = "#16a34a"; // Green for on-time
+                                        status = " (On Time)";
+                                    } else if (timeDiff < 0) {
+                                        timeColor = "#2563eb"; // Blue for early
+                                        const earlyMins = Math.abs(Math.floor(timeDiff / 60));
+                                        status = ` (${earlyMins} min early)`;
+                                    } else {
+                                        timeColor = "#dc2626"; // Red for late
+                                        const lateMins = Math.floor(timeDiff / 60);
+                                        status = ` (${lateMins} min late)`;
+                                    }
+                                    
+                                    // Update the DOM element
+                                    const timeElement = stopDiv.querySelector('.stop-time');
+                                    if (timeElement) {
+                                        timeElement.innerHTML = `
+                                            <span style="color: ${timeColor}; font-weight: 600;">Predicted: ${predTime}${status}</span><br>
+                                            <span style="color: #999; font-size: 11px;">Scheduled: ${scheduledTime}</span>
+                                        `;
+                                        console.log(`✓ Updated display for stop ${stop.stop_name}`);
+                                    } else {
+                                        console.error(`Could not find .stop-time element for stop ${stop.stop_name}`);
+                                    }
+                                } else {
+                                    console.log(`No matching prediction found for route "${routeId}"`);
+                                }
+                            } else {
+                                console.log(`No predictions available for stop ${stop.stop_code} (likely no service scheduled at this time)`);
+                                // Show a subtle note that real-time data isn't available
+                                const timeElement = stopDiv.querySelector('.stop-time');
+                                if (timeElement) {
+                                    timeElement.innerHTML = `
+                                        Scheduled: ${scheduledTime}<br>
+                                        <span style="color: #999; font-size: 10px; font-style: italic;">No real-time data available</span>
+                                    `;
+                                }
+                            }
+                        }).catch(err => {
+                            console.error(`Error fetching predictions for stop ${stop.stop_code}:`, err);
+                        });
+                    } else {
+                        if (agency === "GO" && !stop.stop_code) {
+                            console.log(`Stop ${stop.stop_name} has no stop_code`);
+                        }
+                    }
                 }
 
                 stopDiv.addEventListener("click", async () => {
@@ -688,7 +831,7 @@
                 });
 
                 stopsList.appendChild(stopDiv);
-            });
+            }
 
             // Open sidebar
             document.getElementById("sidebar").classList.add("open");
@@ -697,58 +840,83 @@
         }
     }
 
+    function isStreetcar(routeNumber) {
+        // Routes 500-599 are streetcars
+        const route = parseInt(routeNumber);
+        return !isNaN(route) && route >= 500 && route <= 599;
+    }
+
     async function updateVehicles() {
         const res = await fetch("/vehicles");
-        let vehicles = await res.json();
-
-        vehicles = vehicles.filter(v => agencyFilters[v.agency] !== false);
-
-        if (selectedVehicleKey) {
-            vehicles = vehicles.filter(v => getVehicleKey(v) === selectedVehicleKey);
-            if (vehicles.length === 0) {
-                selectedVehicleKey = null;
-            }
-        }
-
-        markers.forEach(m => map.removeLayer(m));
-        markers = [];
-
+        const vehicles = await res.json();
+        vehiclesCache = vehicles;  // Store in cache
+        
+        // Create markers for new vehicles
         vehicles.forEach(v => {
-            // Select icon based on agency and vehicle type
-            let icon;
-            if (v.agency === "TTC") {
-                // TTC uses red icons
-                icon = v.vehicle_subtype === "streetcar" ? ttcStreetcarIcon : ttcBusIcon;
-            } else if (v.agency === "UP") {
-                // UP Express uses brown train icon
-                icon = upTrainIcon;
-            } else {
-                // GO Transit, YRT use green icons
-                icon = v.vehicle_type === "train" ? trainIcon : busIcon;
-            }
-
-            const marker = L.marker(
-                [v.lat, v.lon],
-                { icon: icon }
-            ).addTo(map);
-
-            // Show only route name and destination on click
             const vehicleKey = getVehicleKey(v);
-            let popupContent = `
-                <b>${v.route_long_name || v.route}</b><br>
-                ${v.destination || 'Unknown Destination'}<br>
-                <a href="#" onclick="selectVehicle('${vehicleKey}', '${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
-            `;
-            
-            marker.bindPopup(popupContent);
+            if (!vehicleMarkers[vehicleKey]) {
+                // Select icon based on agency and vehicle type
+                let icon;
+                if (v.agency === "TTC") {
+                    // TTC: routes 500-599 are streetcars, rest are buses
+                    icon = isStreetcar(v.route) ? ttcStreetcarIcon : ttcBusIcon;
+                } else if (v.agency === "UP") {
+                    icon = upTrainIcon;
+                } else {
+                    icon = v.vehicle_type === "train" ? trainIcon : busIcon;
+                }
 
-            // Open sidebar on marker click
-            marker.on("click", function() {
-                selectVehicle(vehicleKey, v.trip, v.lat, v.lon, v.route, v.agency);
-            });
-
-            markers.push(marker);
+                const marker = L.marker([v.lat, v.lon], { icon: icon }).addTo(map);
+                
+                let popupContent = `
+                    <b>${v.route_long_name || v.route}</b><br>
+                    ${v.destination || 'Unknown Destination'}<br>
+                    <a href="#" onclick="selectVehicle('${vehicleKey}', '${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
+                `;
+                
+                marker.bindPopup(popupContent);
+                marker.on("click", function() {
+                    selectVehicle(vehicleKey, v.trip, v.lat, v.lon, v.route, v.agency);
+                });
+                
+                vehicleMarkers[vehicleKey] = marker;
+            } else {
+                // Update position of existing marker
+                vehicleMarkers[vehicleKey].setLatLng([v.lat, v.lon]);
+            }
         });
+        
+        renderVehicles(vehicles);
+    }
+
+    function renderVehicles(vehicles) {
+        // Show/hide markers based on filters - much faster than remove/add
+        vehicles.forEach(v => {
+            const vehicleKey = getVehicleKey(v);
+            const marker = vehicleMarkers[vehicleKey];
+            if (!marker) return;
+            
+            // Determine if this vehicle should be visible
+            const passesAgencyFilter = agencyFilters[v.agency] !== false;
+            const passesSelectionFilter = !selectedVehicleKey || getVehicleKey(v) === selectedVehicleKey;
+            const shouldShow = passesAgencyFilter && passesSelectionFilter;
+            
+            // Show or hide the marker
+            if (shouldShow) {
+                if (!map.hasLayer(marker)) {
+                    map.addLayer(marker);
+                }
+            } else {
+                if (map.hasLayer(marker)) {
+                    map.removeLayer(marker);
+                }
+            }
+        });
+        
+        // Clear selectedVehicleKey if no vehicles match
+        if (selectedVehicleKey && !vehicles.some(v => getVehicleKey(v) === selectedVehicleKey)) {
+            selectedVehicleKey = null;
+        }
     }
 
     updateVehicles();

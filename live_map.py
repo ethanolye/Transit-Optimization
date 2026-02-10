@@ -99,6 +99,15 @@ def to_python_type(val):
     return val
 
 
+def is_streetcar(route_number):
+    """Check if route number is a streetcar (500-599 range)"""
+    try:
+        route_num = int(route_number)
+        return 500 <= route_num <= 599
+    except (ValueError, TypeError):
+        return False
+
+
 def time_to_seconds(t):
     h, m, s = map(int, t.split(":"))
     return h * 3600 + m * 60 + s
@@ -181,8 +190,8 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                 # GTFS route types: 0=tram, 1=subway, 2=rail, 3=bus, 4=ferry, etc.
                 vehicle_type = "train" if route_type in [0, 1, 2] else "bus"
 
-                # For TTC, check if it's a streetcar (5xx routes)
-                vehicle_subtype = "streetcar" if str(route_short).startswith("5") else "bus"
+                # Check if it's a streetcar (route 500-599)
+                vehicle_subtype = "streetcar" if is_streetcar(route_short) else "bus"
 
                 return {
                     "route_id": to_python_type(route_id),
@@ -210,8 +219,8 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                 route_type = int(route_row['route_type'].values[0]) if 'route_type' in route_row.columns else 3
                 vehicle_type = "train" if route_type in [0, 1, 2] else "bus"
 
-                # For TTC, check if it's a streetcar (5xx routes)
-                vehicle_subtype = "streetcar" if str(route_short).startswith("5") else "bus"
+                # Check if it's a streetcar (route 500-599)
+                vehicle_subtype = "streetcar" if is_streetcar(route_short) else "bus"
 
                 return {
                     "route_id": to_python_type(route_id),
@@ -257,20 +266,27 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
             trip_stops = stop_times[stop_times['trip_id'] == trip_id].sort_values('stop_sequence')
 
             if not trip_stops.empty:
-                # Merge with stop information
-                trip_stops = trip_stops.merge(stops[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']], on='stop_id')
+                # Merge with stop information - include stop_code if available
+                stop_cols = ['stop_id', 'stop_name', 'stop_lat', 'stop_lon']
+                if 'stop_code' in stops.columns:
+                    stop_cols.append('stop_code')
+                trip_stops = trip_stops.merge(stops[stop_cols], on='stop_id')
 
                 result = []
                 for idx, row in trip_stops.iterrows():
-                    result.append({
+                    stop_data = {
                         "stop_sequence": int(row['stop_sequence']),
-                        "stop_id": row['stop_id'],
-                        "stop_name": row['stop_name'],
+                        "stop_id": to_python_type(row['stop_id']),
+                        "stop_name": to_python_type(row['stop_name']),
                         "arrival_time": row['arrival_time'],
                         "departure_time": row['departure_time'],
                         "lat": float(row['stop_lat']),
                         "lon": float(row['stop_lon'])
-                    })
+                    }
+                    # Add stop_code if available
+                    if 'stop_code' in row:
+                        stop_data['stop_code'] = to_python_type(row['stop_code'])
+                    result.append(stop_data)
 
                 return result
 
@@ -781,10 +797,10 @@ def vehicles():
                         "vehicle_subtype": trip_info.get("vehicle_subtype", "bus")
                     })
                 else:
-                    # Default TTC with streetcar detection based on route number
+                    # Default TTC with streetcar detection based on route number (500-599)
                     vehicle_data["agency"] = "TTC"
                     vehicle_data["vehicle_type"] = "bus"
-                    vehicle_data["vehicle_subtype"] = "streetcar" if str(route_id).startswith("5") else "bus"
+                    vehicle_data["vehicle_subtype"] = "streetcar" if is_streetcar(route_id) else "bus"
 
                 output.append(vehicle_data)
             except (ValueError, TypeError, AttributeError):
@@ -793,6 +809,75 @@ def vehicles():
         logging.error("Error fetching TTC vehicles: %s", e)
 
     return jsonify(output)
+
+
+@app.route("/api/go-transit-stop/<stop_code>")
+def get_go_transit_predictions(stop_code):
+    """Get GO Transit stop predictions for a specific stop"""
+    try:
+        GO_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
+        
+        # Use API key in params
+        params = {"key": API_KEY} if API_KEY else {}
+        
+        r = requests.get(
+            f"{GO_STOP_URL}/{stop_code}",
+            params=params,
+            headers={'Accept': 'application/json'},
+            timeout=5
+        )
+        r.raise_for_status()
+        data = r.json()
+        
+        logging.debug(f"GO Transit API response for stop {stop_code}: {data}")
+        
+        # Extract predictions from the API response
+        predictions = []
+        
+        # Check if NextService exists and has Lines
+        next_service = data.get('NextService')
+        if not next_service:
+            logging.debug(f"No NextService data for stop {stop_code}")
+            return jsonify({'predictions': [], 'stop_code': stop_code})
+        
+        lines = next_service.get('Lines', [])
+        if not isinstance(lines, list):
+            lines = [lines] if lines else []
+        
+        for line in lines:
+            line_code = str(line.get('LineCode', ''))
+            line_name = line.get('LineName', '')
+            
+            # Get departure times
+            scheduled_time = line.get('ScheduledDepartureTime')
+            computed_time = line.get('ComputedDepartureTime')
+            
+            # Skip if no times available
+            if not scheduled_time and not computed_time:
+                continue
+            
+            # Use computed time as prediction if available, otherwise use scheduled
+            predicted_time = computed_time if computed_time else scheduled_time
+            
+            predictions.append({
+                'route_id': line_code,
+                'route_number': line_code,
+                'line_name': line_name,
+                'predicted_time': predicted_time,
+                'scheduled_time': scheduled_time,
+                'status': line.get('DepartureStatus', ''),
+                'trip_number': line.get('TripNumber', '')
+            })
+        
+        logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
+        return jsonify({'predictions': predictions, 'stop_code': stop_code})
+        
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTP error fetching GO Transit stop {stop_code}: {e}")
+        return jsonify({'predictions': [], 'error': str(e)}), 200
+    except Exception as e:
+        logging.error(f"Error fetching GO Transit stop predictions for {stop_code}: {e}")
+        return jsonify({'predictions': [], 'error': str(e)}), 200
 
 
 @app.route("/trip/<trip_id>")
