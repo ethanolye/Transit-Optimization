@@ -15,9 +15,9 @@ TAS = input("\nSelect Transit Agency: ").upper()
 
 # Map user input to actual GTFS zip files
 agency_files = {
-    "TTC": "TTC Routes and Schedules Data.zip",
-    "GO": "GO-GTFS.zip",
-    "UP": "UP-GTFS.zip",
+    "TTC": "TTC/TTC Routes and Schedules Data.zip",
+    "GO": "Metrolinx/GO-GTFS.zip",
+    "UP": "Metrolinx/UP-GTFS.zip",
     "YRT": "google_transit.zip"
 }
 

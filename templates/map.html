@@ -605,10 +605,11 @@
         return `${formattedTime} +${days} day${days > 1 ? 's' : ''}`;
     }
 
-    async function getGOTransitPredictions(stopCode) {
-        // Fetch GO Transit stop predictions
+    async function getGOTransitPredictions(stopCode, tripId) {
+        // Fetch GO Transit stop predictions for a specific trip
         try {
-            const res = await fetch(`/api/go-transit-stop/${stopCode}`);
+            const url = tripId ? `/api/go-transit-stop/${stopCode}?trip_id=${encodeURIComponent(tripId)}` : `/api/go-transit-stop/${stopCode}`;
+            const res = await fetch(url);
             if (!res.ok) return null;
             const data = await res.json();
             return data;
@@ -732,37 +733,17 @@
                             console.log(`Fetching predictions for GO stop ${stop.stop_code} (${stop.stop_name}, stop_id: ${stop.stop_id})`);
                             console.log(`Current trip_id: ${window.currentTripId}`);
                         
-                            getGOTransitPredictions(stop.stop_code).then(predictions => {
+                            getGOTransitPredictions(stop.stop_code, window.currentTripId).then(predictions => {
                             console.log(`Received predictions for stop ${stop.stop_code}:`, predictions);
                             
                             if (predictions && predictions.predictions && predictions.predictions.length > 0) {
-                                console.log(`Stop ${stop.stop_code} has ${predictions.predictions.length} predictions`);
-                                console.log(`Looking for trip_id: "${window.currentTripId}"`);
+                                console.log(`Stop ${stop.stop_code} has ${predictions.predictions.length} predictions for trip ${window.currentTripId}`);
                                 
-                                // Extract trip number from GTFS trip_id (format: date-route-tripnumber)
-                                const currentTrip = String(window.currentTripId || '').trim();
-                                const tripIdParts = currentTrip.split('-');
-                                const extractedTripNumber = tripIdParts.length >= 3 ? tripIdParts[tripIdParts.length - 1] : currentTrip;
-                                
-                                console.log(`Extracted trip number from GTFS: "${extractedTripNumber}"`);
-                                console.log(`Available API predictions:`, predictions.predictions.map(p => `Trip ${p.trip_number}, Route ${p.route_id}, Line ${p.line_name}`));
-                                
-                                // STRICT trip_id matching ONLY - no fallback
-                                // GO Transit trip_id format: "20260402-56-56641" where last part is the trip number
-                                let routePrediction = predictions.predictions.find(p => {
-                                    const tripNumber = String(p.trip_number || '').trim();
-                                    
-                                    console.log(`  Checking: API trip_number="${tripNumber}" vs GTFS extracted="${extractedTripNumber}"`);
-                                    
-                                    // STRICT: Match extracted trip number with API trip number
-                                    return tripNumber === extractedTripNumber;
-                                });
+                                // API should already filter by trip, so use the first (and should be only) prediction
+                                const routePrediction = predictions.predictions[0];
                                 
                                 if (!routePrediction) {
-                                    console.warn(`❌ NO EXACT TRIP MATCH FOUND!`);
-                                    console.warn(`   Required trip number: "${extractedTripNumber}"`);
-                                    console.warn(`   Available trip numbers: ${predictions.predictions.map(p => p.trip_number).join(', ')}`);
-                                    console.warn(`   Skipping prediction display for this stop to avoid showing wrong trip data`);
+                                    console.warn(`⚠️ No predictions found for stop ${stop.stop_code} on trip ${window.currentTripId}`);
                                 }
                                 
                                 if (routePrediction && routePrediction.predicted_time) {
@@ -827,7 +808,7 @@
                                     const timeElement = stopDiv.querySelector('.stop-time');
                                     if (timeElement) {
                                         timeElement.innerHTML = `
-                                            <span style="color: ${timeColor}; font-weight: 600;">Predicted: ${predTime}${status}</span><br>
+                                            <span style="color: ${timeColor}; font-weight: 600;">${predTime}${status}</span><br>
                                             <span style="color: #999; font-size: 11px;">Scheduled: ${scheduledTime}</span>
                                         `;
                                         console.log(`✓ Updated display for stop ${stop.stop_name} - Color: ${timeColor}, Status: ${status}`);
@@ -948,46 +929,61 @@
     }
 
     async function updateVehicles() {
-        const res = await fetch("/vehicles");
-        const vehicles = await res.json();
-        vehiclesCache = vehicles;  // Store in cache
-        
-        // Create markers for new vehicles
-        vehicles.forEach(v => {
-            const vehicleKey = getVehicleKey(v);
-            if (!vehicleMarkers[vehicleKey]) {
-                // Select icon based on agency and vehicle type
-                let icon;
-                if (v.agency === "TTC") {
-                    // TTC: routes 500-599 are streetcars, rest are buses
-                    icon = isStreetcar(v.route) ? ttcStreetcarIcon : ttcBusIcon;
-                } else if (v.agency === "UP") {
-                    icon = upTrainIcon;
-                } else {
-                    icon = v.vehicle_type === "train" ? trainIcon : busIcon;
-                }
-
-                const marker = L.marker([v.lat, v.lon], { icon: icon }).addTo(map);
-                
-                let popupContent = `
-                    <b>${v.route_long_name || v.route}</b><br>
-                    ${v.destination || 'Unknown Destination'}<br>
-                    <a href="#" onclick="selectVehicle('${vehicleKey}', '${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
-                `;
-                
-                marker.bindPopup(popupContent);
-                marker.on("click", function() {
-                    selectVehicle(vehicleKey, v.trip, v.lat, v.lon, v.route, v.agency);
-                });
-                
-                vehicleMarkers[vehicleKey] = marker;
-            } else {
-                // Update position of existing marker
-                vehicleMarkers[vehicleKey].setLatLng([v.lat, v.lon]);
+        try {
+            const res = await fetch("/vehicles");
+            if (!res.ok) {
+                console.error(`Failed to fetch vehicles: ${res.status} ${res.statusText}`);
+                return;
             }
-        });
-        
-        renderVehicles(vehicles);
+            const vehicles = await res.json();
+            console.log(`[Vehicles] Fetched ${vehicles.length} vehicles from server`);
+            
+            if (!vehicles || vehicles.length === 0) {
+                console.warn("[Vehicles] No vehicles returned from API");
+            }
+            
+            vehiclesCache = vehicles;  // Store in cache
+            
+            // Create markers for new vehicles
+            vehicles.forEach(v => {
+                const vehicleKey = getVehicleKey(v);
+                if (!vehicleMarkers[vehicleKey]) {
+                    // Select icon based on agency and vehicle type
+                    let icon;
+                    if (v.agency === "TTC") {
+                        // TTC: routes 500-599 are streetcars, rest are buses
+                        icon = isStreetcar(v.route) ? ttcStreetcarIcon : ttcBusIcon;
+                    } else if (v.agency === "UP") {
+                        icon = upTrainIcon;
+                    } else {
+                        icon = v.vehicle_type === "train" ? trainIcon : busIcon;
+                    }
+
+                    console.log(`[Vehicles] Creating marker for ${v.agency} route ${v.route} (${vehicleKey})`);
+                    const marker = L.marker([v.lat, v.lon], { icon: icon }).addTo(map);
+                    
+                    let popupContent = `
+                        <b>${v.route_long_name || v.route}</b><br>
+                        ${v.destination || 'Unknown Destination'}<br>
+                        <a href="#" onclick="selectVehicle('${vehicleKey}', '${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
+                    `;
+                    
+                    marker.bindPopup(popupContent);
+                    marker.on("click", function() {
+                        selectVehicle(vehicleKey, v.trip, v.lat, v.lon, v.route, v.agency);
+                    });
+                    
+                    vehicleMarkers[vehicleKey] = marker;
+                } else {
+                    // Update position of existing marker
+                    vehicleMarkers[vehicleKey].setLatLng([v.lat, v.lon]);
+                }
+            });
+            
+            renderVehicles(vehicles);
+        } catch (error) {
+            console.error(`[Vehicles] Error updating vehicles: ${error}`);
+        }
     }
 
     function renderVehicles(vehicles) {

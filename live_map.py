@@ -39,22 +39,24 @@ print("\n=== Loading GTFS Data ===")
 
 # Detect available GTFS files
 GTFS_FILES = {}
-for file in os.listdir("."):
-    if file.endswith(".zip"):
-        # Match various GTFS file patterns
-        if "TTC" in file or "Routes and Schedules" in file:
-            agency = "TTC"
-        elif "GO" in file:
-            agency = "GO"
-        elif "UP" in file:
-            agency = "UP"
-        elif "YRT" in file or file.lower() == "google_transit.zip":
-            continue
-        else:
-            continue
 
-        GTFS_FILES[agency] = file
-        print(f"Found {agency}: {file}")
+# Check TTC directory
+if os.path.exists("TTC"):
+    for file in os.listdir("TTC"):
+        if file.endswith(".zip"):
+            GTFS_FILES["TTC"] = os.path.join("TTC", file)
+            print(f"Found TTC: {os.path.join('TTC', file)}")
+
+# Check Metrolinx directory
+if os.path.exists("Metrolinx"):
+    for file in os.listdir("Metrolinx"):
+        if file.endswith(".zip"):
+            if "GO" in file or "GO-GTFS" in file:
+                GTFS_FILES["GO"] = os.path.join("Metrolinx", file)
+                print(f"Found GO: {os.path.join('Metrolinx', file)}")
+            elif "UP" in file or "UP-GTFS" in file:
+                GTFS_FILES["UP"] = os.path.join("Metrolinx", file)
+                print(f"Found UP: {os.path.join('Metrolinx', file)}")
 
 # Load GTFS data from available files
 GTFS_DATA = {}
@@ -664,9 +666,12 @@ def api_stop_connections(agency, stop_id):
 @app.route("/vehicles")
 def vehicles():
     output = []
+    
+    logging.info("=== Fetching vehicles from all agencies ===")
 
     # Fetch GO Transit vehicles
     try:
+        logging.debug("Fetching GO Transit vehicles...")
         if not API_KEY:
             raise ValueError("Missing GO API key")
 
@@ -677,7 +682,8 @@ def vehicles():
         )
         r.raise_for_status()
         data = r.json()
-
+        
+        go_count = 0
         for entity in data.get("entity", []):
             v = entity.get("vehicle")
             if not v or "position" not in v:
@@ -717,11 +723,15 @@ def vehicles():
                 vehicle_data["vehicle_subtype"] = "bus"
 
             output.append(vehicle_data)
+            go_count += 1
+            
+        logging.info(f"✓ GO Transit: {go_count} vehicles fetched")
     except Exception as e:
-        logging.error("Error fetching GO Transit vehicles: %s", e)
+        logging.error(f"✗ Error fetching GO Transit vehicles: {e}", exc_info=True)
 
     # Fetch UP Express vehicles
     try:
+        logging.debug("Fetching UP Express vehicles...")
         if not API_KEY:
             raise ValueError("Missing UP API key")
 
@@ -732,7 +742,8 @@ def vehicles():
         )
         r.raise_for_status()
         data = r.json()
-
+        
+        up_count = 0
         for entity in data.get("entity", []):
             v = entity.get("vehicle")
             if not v or "position" not in v:
@@ -767,15 +778,20 @@ def vehicles():
                 vehicle_data["vehicle_subtype"] = "train"
 
             output.append(vehicle_data)
+            up_count += 1
+            
+        logging.info(f"✓ UP Express: {up_count} vehicles fetched")
     except Exception as e:
-        logging.error("Error fetching UP Express vehicles: %s", e)
+        logging.error(f"✗ Error fetching UP Express vehicles: {e}", exc_info=True)
 
     # Fetch TTC vehicles
     try:
+        logging.debug("Fetching TTC vehicles...")
         r = requests.get(TTC_VEHICLE_URL, timeout=5)
         r.raise_for_status()
         root = ET.fromstring(r.content)
-
+        
+        ttc_count = 0
         for vehicle in root.findall(".//vehicle"):
             try:
                 # TTC API returns data in attributes, not child elements
@@ -811,21 +827,31 @@ def vehicles():
                     vehicle_data["vehicle_subtype"] = "streetcar" if is_streetcar(route_id) else "bus"
 
                 output.append(vehicle_data)
-            except (ValueError, TypeError, AttributeError):
+                ttc_count += 1
+            except (ValueError, TypeError, AttributeError) as e:
+                logging.debug(f"Skipping TTC vehicle: {e}")
                 continue
+                
+        logging.info(f"✓ TTC: {ttc_count} vehicles fetched")
     except Exception as e:
-        logging.error("Error fetching TTC vehicles: %s", e)
-
+        logging.error(f"✗ Error fetching TTC vehicles: {e}", exc_info=True)
+    
+    logging.info(f"=== Total vehicles returned: {len(output)} ===")
     return jsonify(output)
 
 
 @app.route("/api/go-transit-stop/<stop_code>")
 def get_go_transit_predictions(stop_code):
-    """Get GO Transit stop predictions for a specific stop"""
+    """Get GO Transit stop predictions for a specific stop, optionally filtered by trip_id"""
     try:
+        # Get optional trip_id query parameter
+        requested_trip_id = request.args.get('trip_id', None)
+        
         GO_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
         
         logging.info(f"Fetching GO Transit predictions for stop_code: {stop_code}")
+        if requested_trip_id:
+            logging.info(f"  Filtering for trip_id: {requested_trip_id}")
         
         # Use API key in params
         params = {"key": API_KEY} if API_KEY else {}
@@ -859,15 +885,20 @@ def get_go_transit_predictions(stop_code):
         if not isinstance(lines, list):
             lines = [lines] if lines else []
         
+        # Extract trip number from GTFS trip_id (format: YYYYMMDD-route-tripnumber)
+        extracted_trip_number = None
+        if requested_trip_id:
+            trip_parts = str(requested_trip_id).split('-')
+            if len(trip_parts) >= 3:
+                extracted_trip_number = trip_parts[-1]
+            else:
+                extracted_trip_number = str(requested_trip_id)
+            logging.debug(f"Extracted trip number '{extracted_trip_number}' from trip_id '{requested_trip_id}'")
+        
         for line in lines:
             line_code = str(line.get('LineCode', ''))
             line_name = line.get('LineName', '')
             trip_number = str(line.get('TripNumber', ''))
-            
-            # Skip if no trip number - we need this for strict matching
-            if not trip_number:
-                logging.warning(f"  Skipping line {line_code} - no TripNumber provided")
-                continue
             
             # Get departure times
             scheduled_time = line.get('ScheduledDepartureTime')
@@ -875,6 +906,11 @@ def get_go_transit_predictions(stop_code):
             
             # Skip if no times available
             if not scheduled_time and not computed_time:
+                continue
+            
+            # If trip_id was provided, only include predictions matching that trip
+            if requested_trip_id and trip_number != extracted_trip_number:
+                logging.debug(f"  ✗ Skipping Line {line_code}, Trip {trip_number} (looking for {extracted_trip_number})")
                 continue
             
             # Use computed time as prediction if available, otherwise use scheduled
@@ -894,7 +930,10 @@ def get_go_transit_predictions(stop_code):
         
         logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
         if predictions:
-            logging.info(f"Returning predictions for stop {stop_code}: {', '.join([f'Trip {p['trip_number']}' for p in predictions])}")
+            trip_list = ", ".join([f"Trip {p['trip_number']}" for p in predictions])
+            logging.info(f"Returning predictions for stop {stop_code}: {trip_list}")
+        elif requested_trip_id:
+            logging.warning(f"No predictions found for stop {stop_code} matching trip {requested_trip_id}")
         return jsonify({'predictions': predictions, 'stop_code': stop_code})
         
     except requests.exceptions.HTTPError as e:
