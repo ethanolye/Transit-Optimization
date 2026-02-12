@@ -629,6 +629,9 @@
                 url += routeId ? `&agency=${agency}` : `?agency=${agency}`;
             }
             
+            // Store tripId for use in predictions matching
+            window.currentTripId = tripId;
+            
             const res = await fetch(url);
             const data = await res.json();
 
@@ -651,11 +654,15 @@
             const currentTime = new Date();
             const currentSeconds = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
 
+            // Track delay from predictions to apply to terminal
+            let lastKnownDelay = null;
+            
             // For each stop, fetch GO Transit predictions if this is a GO vehicle
             for (let idx = 0; idx < data.stops.length; idx++) {
                 const stop = data.stops[idx];
                 const stopDiv = document.createElement("div");
                 stopDiv.className = "stop-item";
+                const isTerminal = (idx === data.stops.length - 1);
 
                 // Parse arrival time - handle "N/A" for route-only data
                 if (stop.arrival_time === "N/A") {
@@ -693,48 +700,111 @@
                         <div class="stop-time">Scheduled: ${scheduledTime}</div>
                     `;
                     
-                    // For GO Transit, fetch predictions asynchronously for upcoming stops only
-                    if (agency === "GO" && stop.stop_code && stopSeconds >= currentSeconds) {
-                        console.log(`Fetching predictions for GO stop ${stop.stop_code} (${stop.stop_name})`);
+                    // For GO Transit terminals, apply last known delay instead of fetching prediction
+                    if (agency === "GO" && isTerminal && lastKnownDelay !== null) {
+                        const timeElement = stopDiv.querySelector('.stop-time');
+                        if (timeElement) {
+                            const delayMins = Math.round(lastKnownDelay / 60);
+                            let timeColor = "#666";
+                            let status = "";
+                            
+                            if (Math.abs(lastKnownDelay) <= 60) {
+                                timeColor = "#16a34a";
+                                status = " (On Time)";
+                            } else if (lastKnownDelay < 0) {
+                                timeColor = "#2563eb";
+                                status = ` (${Math.abs(delayMins)} min early)`;
+                            } else {
+                                timeColor = "#dc2626";
+                                status = ` (${delayMins} min late)`;
+                            }
+                            
+                            timeElement.innerHTML = `
+                                <span style="color: ${timeColor}; font-weight: 600;">Scheduled: ${scheduledTime}${status}</span>
+                            `;
+                        }
+                    }
+                    // For GO Transit non-terminal stops, fetch predictions asynchronously for upcoming stops only
+                    else if (agency === "GO" && !isTerminal && stopSeconds >= currentSeconds) {
+                        if (!stop.stop_code) {
+                            console.warn(`⚠️ Stop ${stop.stop_name} (${stop.stop_id}) has no stop_code - cannot fetch predictions`);
+                        } else {
+                            console.log(`Fetching predictions for GO stop ${stop.stop_code} (${stop.stop_name}, stop_id: ${stop.stop_id})`);
+                            console.log(`Current trip_id: ${window.currentTripId}`);
                         
-                        getGOTransitPredictions(stop.stop_code).then(predictions => {
+                            getGOTransitPredictions(stop.stop_code).then(predictions => {
                             console.log(`Received predictions for stop ${stop.stop_code}:`, predictions);
                             
                             if (predictions && predictions.predictions && predictions.predictions.length > 0) {
                                 console.log(`Stop ${stop.stop_code} has ${predictions.predictions.length} predictions`);
-                                console.log(`Looking for route: "${routeId}"`);
+                                console.log(`Looking for trip_id: "${window.currentTripId}"`);
                                 
-                                // Try to find a matching prediction for this route
-                                const routePrediction = predictions.predictions.find(p => {
-                                    const pRouteId = String(p.route_id || '').toLowerCase();
-                                    const pRouteNum = String(p.route_number || '').toLowerCase();
-                                    const pLineName = String(p.line_name || '').toLowerCase();
-                                    const searchRoute = String(routeId || '').toLowerCase();
+                                // Extract trip number from GTFS trip_id (format: date-route-tripnumber)
+                                const currentTrip = String(window.currentTripId || '').trim();
+                                const tripIdParts = currentTrip.split('-');
+                                const extractedTripNumber = tripIdParts.length >= 3 ? tripIdParts[tripIdParts.length - 1] : currentTrip;
+                                
+                                console.log(`Extracted trip number from GTFS: "${extractedTripNumber}"`);
+                                console.log(`Available API predictions:`, predictions.predictions.map(p => `Trip ${p.trip_number}, Route ${p.route_id}, Line ${p.line_name}`));
+                                
+                                // STRICT trip_id matching ONLY - no fallback
+                                // GO Transit trip_id format: "20260402-56-56641" where last part is the trip number
+                                let routePrediction = predictions.predictions.find(p => {
+                                    const tripNumber = String(p.trip_number || '').trim();
                                     
-                                    console.log(`Checking prediction: route_id=${pRouteId}, route_num=${pRouteNum}, line_name=${pLineName} vs search=${searchRoute}`);
+                                    console.log(`  Checking: API trip_number="${tripNumber}" vs GTFS extracted="${extractedTripNumber}"`);
                                     
-                                    return pRouteId === searchRoute || 
-                                           pRouteNum === searchRoute ||
-                                           pLineName.includes(searchRoute) ||
-                                           searchRoute.includes(pRouteId) ||
-                                           searchRoute.includes(pRouteNum);
+                                    // STRICT: Match extracted trip number with API trip number
+                                    return tripNumber === extractedTripNumber;
                                 });
                                 
+                                if (!routePrediction) {
+                                    console.warn(`❌ NO EXACT TRIP MATCH FOUND!`);
+                                    console.warn(`   Required trip number: "${extractedTripNumber}"`);
+                                    console.warn(`   Available trip numbers: ${predictions.predictions.map(p => p.trip_number).join(', ')}`);
+                                    console.warn(`   Skipping prediction display for this stop to avoid showing wrong trip data`);
+                                }
+                                
                                 if (routePrediction && routePrediction.predicted_time) {
-                                    console.log(`✓ Found matching prediction:`, routePrediction);
+                                    console.log(`✓ Processing prediction for trip ${routePrediction.trip_number}:`, routePrediction);
                                     
-                                    // Parse time - handle both HH:MM:SS and ISO datetime formats
+                                    // Parse time - handle datetime formats: "2026-02-11 19:50:25" or "2026-02-11T19:50:25" or "HH:MM:SS"
                                     let predTimeStr = routePrediction.predicted_time;
-                                    if (predTimeStr.includes('T')) {
-                                        // ISO datetime format - extract time part
-                                        const date = new Date(predTimeStr);
-                                        predTimeStr = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:00`;
+                                    let predDate;
+                                    
+                                    // Check if it's a datetime format (contains date separator or T)
+                                    if (predTimeStr.includes('T') || (predTimeStr.includes(' ') && predTimeStr.includes('-'))) {
+                                        // ISO datetime format - parse as Date object
+                                        // Replace space with T for proper parsing
+                                        const isoStr = predTimeStr.replace(' ', 'T');
+                                        predDate = new Date(isoStr);
+                                        if (isNaN(predDate.getTime())) {
+                                            console.error(`Invalid date format: ${predTimeStr}`);
+                                            return;
+                                        }
+                                        predTimeStr = `${String(predDate.getHours()).padStart(2, '0')}:${String(predDate.getMinutes()).padStart(2, '0')}:00`;
+                                        console.log(`Parsed datetime "${routePrediction.predicted_time}" to time "${predTimeStr}"`);
+                                    } else {
+                                        // Assume HH:MM:SS format
+                                        const timeParts = predTimeStr.split(':');
+                                        if (timeParts.length >= 2) {
+                                            predTimeStr = `${timeParts[0].padStart(2, '0')}:${timeParts[1].padStart(2, '0')}:00`;
+                                        }
                                     }
                                     
                                     const predTime = formatTime(predTimeStr);
-                                    const [ph, pm] = predTimeStr.split(":").map(Number);
+                                    const timeParts = predTimeStr.split(":").map(Number);
+                                    if (timeParts.some(isNaN)) {
+                                        console.error(`Failed to parse time: ${predTimeStr}`);
+                                        return;
+                                    }
+                                    const [ph, pm] = timeParts;
                                     const predSeconds = ph * 3600 + pm * 60;
+                                    console.log(`Predicted time: ${predTime} (${predSeconds} seconds), Scheduled: ${scheduledTime} (${stopSeconds} seconds), Diff: ${predSeconds - stopSeconds} seconds`);
                                     const timeDiff = predSeconds - stopSeconds;
+                                    
+                                    // Save delay for applying to terminal
+                                    lastKnownDelay = timeDiff;
                                     
                                     // Color code based on early/on-time/late
                                     let timeColor = "#666";
@@ -760,12 +830,38 @@
                                             <span style="color: ${timeColor}; font-weight: 600;">Predicted: ${predTime}${status}</span><br>
                                             <span style="color: #999; font-size: 11px;">Scheduled: ${scheduledTime}</span>
                                         `;
-                                        console.log(`✓ Updated display for stop ${stop.stop_name}`);
+                                        console.log(`✓ Updated display for stop ${stop.stop_name} - Color: ${timeColor}, Status: ${status}`);
                                     } else {
                                         console.error(`Could not find .stop-time element for stop ${stop.stop_name}`);
                                     }
-                                } else {
-                                    console.log(`No matching prediction found for route "${routeId}"`);
+                                    
+                                    // Update terminal with the delay
+                                    const terminalStop = data.stops[data.stops.length - 1];
+                                    if (terminalStop && terminalStop.arrival_time !== "N/A") {
+                                        const terminalStopDivs = Array.from(stopsList.children);
+                                        const terminalDiv = terminalStopDivs[terminalStopDivs.length - 1];
+                                        if (terminalDiv) {
+                                            const terminalTimeElement = terminalDiv.querySelector('.stop-time');
+                                            if (terminalTimeElement) {
+                                                const terminalScheduledTime = formatTime(terminalStop.arrival_time);
+                                                const delayMins = Math.round(timeDiff / 60);
+                                                let terminalStatus = "";
+                                                
+                                                if (Math.abs(timeDiff) <= 60) {
+                                                    terminalStatus = " (On Time)";
+                                                } else if (timeDiff < 0) {
+                                                    terminalStatus = ` (${Math.abs(delayMins)} min early)`;
+                                                } else {
+                                                    terminalStatus = ` (${delayMins} min late)`;
+                                                }
+                                                
+                                                terminalTimeElement.innerHTML = `
+                                                    <span style="color: ${timeColor}; font-weight: 600;">Scheduled: ${terminalScheduledTime}${terminalStatus}</span>
+                                                `;
+                                                console.log(`✓ Updated terminal ${terminalStop.stop_name} with delay from ${stop.stop_name}`);
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 console.log(`No predictions available for stop ${stop.stop_code} (likely no service scheduled at this time)`);
@@ -781,9 +877,6 @@
                         }).catch(err => {
                             console.error(`Error fetching predictions for stop ${stop.stop_code}:`, err);
                         });
-                    } else {
-                        if (agency === "GO" && !stop.stop_code) {
-                            console.log(`Stop ${stop.stop_name} has no stop_code`);
                         }
                     }
                 }
@@ -797,7 +890,15 @@
                         selectedStopMarker = L.marker([stop.lat, stop.lon], { icon: stopPinIcon }).addTo(map);
                     }
 
-                    const transferContainer = document.createElement("div");
+                    // Check if transfers are already displayed - if so, remove them (toggle behavior)
+                    let transferContainer = stopDiv.querySelector(".transfer-list");
+                    if (transferContainer) {
+                        transferContainer.remove();
+                        return;
+                    }
+
+                    // Create new transfer container
+                    transferContainer = document.createElement("div");
                     transferContainer.className = "transfer-list";
                     transferContainer.textContent = "Loading transfers...";
                     stopDiv.appendChild(transferContainer);

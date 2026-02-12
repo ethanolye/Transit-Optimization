@@ -283,9 +283,9 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
                         "lat": float(row['stop_lat']),
                         "lon": float(row['stop_lon'])
                     }
-                    # Add stop_code if available
-                    if 'stop_code' in row:
-                        stop_data['stop_code'] = to_python_type(row['stop_code'])
+                    # Add stop_code for GO Transit - use stop_id (which lacks leading 1)
+                    # GO Transit API expects stop codes without the leading 1
+                    stop_data['stop_code'] = to_python_type(row['stop_id'])
                     result.append(stop_data)
 
                 return result
@@ -299,11 +299,15 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
                 trip_stops = stop_times[stop_times['trip_id'] == first_trip_id].sort_values('stop_sequence')
 
                 if not trip_stops.empty:
-                    trip_stops = trip_stops.merge(stops[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']], on='stop_id')
+                    # Merge with stop information - include stop_code if available
+                    stop_cols = ['stop_id', 'stop_name', 'stop_lat', 'stop_lon']
+                    if 'stop_code' in stops.columns:
+                        stop_cols.append('stop_code')
+                    trip_stops = trip_stops.merge(stops[stop_cols], on='stop_id')
 
                     result = []
                     for idx, row in trip_stops.iterrows():
-                        result.append({
+                        stop_data = {
                             "stop_sequence": int(row['stop_sequence']),
                             "stop_id": row['stop_id'],
                             "stop_name": row['stop_name'],
@@ -311,7 +315,11 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
                             "departure_time": "N/A",
                             "lat": float(row['stop_lat']),
                             "lon": float(row['stop_lon'])
-                        })
+                        }
+                        # Add stop_code for GO Transit - use stop_id (which lacks leading 1)
+                        # GO Transit API expects stop codes without the leading 1
+                        stop_data['stop_code'] = row['stop_id']
+                        result.append(stop_data)
 
                     return result
 
@@ -817,15 +825,22 @@ def get_go_transit_predictions(stop_code):
     try:
         GO_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
         
+        logging.info(f"Fetching GO Transit predictions for stop_code: {stop_code}")
+        
         # Use API key in params
         params = {"key": API_KEY} if API_KEY else {}
         
+        full_url = f"{GO_STOP_URL}/{stop_code}"
+        logging.debug(f"Request URL: {full_url} with params: {params}")
+        
         r = requests.get(
-            f"{GO_STOP_URL}/{stop_code}",
+            full_url,
             params=params,
             headers={'Accept': 'application/json'},
             timeout=5
         )
+        
+        logging.debug(f"API Response Status: {r.status_code}")
         r.raise_for_status()
         data = r.json()
         
@@ -847,6 +862,12 @@ def get_go_transit_predictions(stop_code):
         for line in lines:
             line_code = str(line.get('LineCode', ''))
             line_name = line.get('LineName', '')
+            trip_number = str(line.get('TripNumber', ''))
+            
+            # Skip if no trip number - we need this for strict matching
+            if not trip_number:
+                logging.warning(f"  Skipping line {line_code} - no TripNumber provided")
+                continue
             
             # Get departure times
             scheduled_time = line.get('ScheduledDepartureTime')
@@ -859,6 +880,8 @@ def get_go_transit_predictions(stop_code):
             # Use computed time as prediction if available, otherwise use scheduled
             predicted_time = computed_time if computed_time else scheduled_time
             
+            logging.debug(f"  ✓ Line: {line_code}/{line_name}, Trip: {trip_number}, Time: {predicted_time}")
+            
             predictions.append({
                 'route_id': line_code,
                 'route_number': line_code,
@@ -866,10 +889,12 @@ def get_go_transit_predictions(stop_code):
                 'predicted_time': predicted_time,
                 'scheduled_time': scheduled_time,
                 'status': line.get('DepartureStatus', ''),
-                'trip_number': line.get('TripNumber', '')
+                'trip_number': trip_number
             })
         
         logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
+        if predictions:
+            logging.info(f"Returning predictions for stop {stop_code}: {', '.join([f'Trip {p['trip_number']}' for p in predictions])}")
         return jsonify({'predictions': predictions, 'stop_code': stop_code})
         
     except requests.exceptions.HTTPError as e:
