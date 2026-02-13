@@ -8,8 +8,37 @@ import xml.etree.ElementTree as ET
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
+from utils import (to_python_type, time_to_seconds, format_gtfs_time, 
+                   get_current_time_seconds, is_streetcar, extract_trip_details,
+                   extract_branch_from_headsign)
 
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+# Try to import GTFS-realtime bindings for TTC
+try:
+    from google.transit import gtfs_realtime_pb2
+    GTFS_RT_AVAILABLE = True
+except ImportError:
+    GTFS_RT_AVAILABLE = False
+    logging.warning("gtfs-realtime-bindings not available. Install with: pip install gtfs-realtime-bindings")
+
+# Configure logging with both console and file output
+log_format = "%(asctime)s - %(levelname)s - %(message)s"
+log_dir = "logs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+log_file = os.path.join(log_dir, "debug.log")
+
+# Clear logger handlers and reconfigure
+logging.getLogger().handlers.clear()
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format=log_format,
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
 logging.getLogger("werkzeug").setLevel(logging.DEBUG)
 
 load_dotenv()  # Load environment variables from .env file
@@ -28,9 +57,15 @@ UP_VEHICLE_URL = (
     "api/V1/UP/Gtfs/Feed/VehiclePosition"
 )
 
-TTC_VEHICLE_URL = (
-    "https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc"
-)
+# TTC GTFS-RT API URLs
+TTC_VEHICLE_URL = "https://bustime.ttc.ca/gtfsrt/vehicles"
+TTC_TRIP_ALERTS_URL = "https://bustime.ttc.ca/gtfsrt/trips"
+
+# Legacy NextBus URL (kept as fallback)
+TTC_NEXTBUS_URL = "https://webservices.nextbus.com/service/publicXMLFeed?command=routeConfig&a=ttc&r="
+
+# Cache for TTC route branch information (route_id -> {direction_tag -> branch_info})
+TTC_ROUTE_CACHE = {}
 
 
 # =========================
@@ -43,10 +78,18 @@ GTFS_FILES = {}
 
 # Check TTC directory
 if os.path.exists("TTC"):
-    for file in os.listdir("TTC"):
-        if file.endswith(".zip"):
-            GTFS_FILES["TTC"] = os.path.join("TTC", file)
-            print(f"Found TTC: {os.path.join('TTC', file)}")
+    # Look for TTC.zip specifically
+    ttc_zip = os.path.join("TTC", "TTC.zip")
+    if os.path.exists(ttc_zip):
+        GTFS_FILES["TTC"] = ttc_zip
+        print(f"Found TTC: {ttc_zip}")
+    else:
+        # Fallback to any .zip file if TTC.zip doesn't exist
+        for file in os.listdir("TTC"):
+            if file.endswith(".zip"):
+                GTFS_FILES["TTC"] = os.path.join("TTC", file)
+                print(f"Found TTC: {os.path.join('TTC', file)}")
+                break
 
 # Check Metrolinx directory
 if os.path.exists("Metrolinx"):
@@ -75,7 +118,7 @@ for agency, zip_file in GTFS_FILES.items():
             shapes = None
             try:
                 shapes = pd.read_csv(z.open("shapes.txt"), low_memory=False)
-                print(f"  ✓ Loaded shapes for {agency}")
+                print(f"  [OK] Loaded shapes for {agency}")
             except KeyError:
                 pass
 
@@ -86,183 +129,174 @@ for agency, zip_file in GTFS_FILES.items():
                 "stops": stops,
                 "shapes": shapes
             }
-            print(f"  ✓ {agency}: {len(routes)} routes, {len(trips)} trips, {len(stops)} stops")
+            print(f"  [OK] {agency}: {len(routes)} routes, {len(trips)} trips, {len(stops)} stops")
     except Exception as e:
         logging.error("Failed to load %s: %s", zip_file, e)
 
-print(f"✓ GTFS Data loaded for: {', '.join(GTFS_DATA.keys())}\n")
+print(f"[OK] GTFS Data loaded for: {', '.join(GTFS_DATA.keys())}\n")
+
+# =========================
+# GTFS LOOKUP CACHE
+# =========================
+print("=== Building GTFS lookup caches ===")
+TRIP_INFO_CACHE = {}
+
+for agency, data in GTFS_DATA.items():
+    trips = data["trips"]
+    routes = data["routes"]
+    
+    # Build route lookup dict
+    route_dict = routes.set_index('route_id').to_dict('index')
+    
+    for idx, trip_row in trips.iterrows():
+        trip_id = trip_row['trip_id']
+        route_id = trip_row['route_id']
+        
+        if route_id not in route_dict:
+            continue
+            
+        route_info = route_dict[route_id]
+        route_short = route_info.get('route_short_name')
+        route_long = route_info.get('route_long_name')
+        route_type = int(route_info.get('route_type', 3))
+        
+        vehicle_type = "train" if route_type in [0, 1, 2] else "bus"
+        vehicle_subtype = "streetcar" if is_streetcar(route_short) else ("train" if vehicle_type == "train" else "bus")
+        
+        destination = "Unknown"
+        route_branch = None
+        
+        if pd.notna(trip_row.get('trip_headsign')):
+            headsign = str(trip_row['trip_headsign']).strip()
+            destination = headsign
+            route_branch = extract_branch_from_headsign(headsign, route_id)
+        
+        shape_id = trip_row.get('shape_id') if pd.notna(trip_row.get('shape_id')) else None
+        
+        # Store with string key for consistent lookups
+        cache_key = str(trip_id)
+        TRIP_INFO_CACHE[cache_key] = {
+            "route_id": route_id,
+            "route_short_name": route_short,
+            "route_long_name": route_long,
+            "destination": destination,
+            "agency": agency,
+            "vehicle_type": vehicle_type,
+            "vehicle_subtype": vehicle_subtype,
+            "route_branch": route_branch,
+            "shape_id": shape_id
+        }
+
+print(f"[OK] Built lookup cache for {len(TRIP_INFO_CACHE)} trips\n")
 
 
-def to_python_type(val):
-    """Convert pandas/numpy types to Python native types"""
-    if pd.isna(val):
-        return None
-    if hasattr(val, 'item'):  # numpy/pandas scalar
-        return val.item()
-    return val
-
-
-def is_streetcar(route_number):
-    """Check if route number is a streetcar (500-599 range)"""
+# =========================
+# TTC ROUTE BRANCH HELPERS
+# =========================
+def fetch_ttc_route_config(route_id):
+    """
+    Fetch TTC route configuration from NextBus API to extract valid branch information.
+    Caches results to avoid repeated API calls.
+    
+    Returns: dict mapping direction_tag -> branch_info
+    Example: {"52_0_52A": {"branch": "A", "name": "..."},
+              "52_0_52B": {"branch": "B", "name": "..."}}
+    """
+    if route_id in TTC_ROUTE_CACHE:
+        return TTC_ROUTE_CACHE[route_id]
+    
     try:
-        route_num = int(route_number)
-        return 500 <= route_num <= 599
-    except (ValueError, TypeError):
-        return False
+        url = f"{TTC_NEXTBUS_URL}{route_id}"
+        logging.debug(f"Fetching TTC route config for route {route_id}")
+        
+        r = requests.get(url, timeout=5)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+        
+        branch_info = {}
+        
+        # Parse route directions/branches from NextBus XML
+        for direction in root.findall(".//direction"):
+            dir_tag = direction.get("tag", "")
+            dir_name = direction.get("name", "")
+            
+            if dir_tag:
+                # Extract branch letter from direction name if present
+                # Examples: "52A - Downtown Loop", "52B - Kipling"
+                branch_match = re.search(r'^(\d+)([A-Z])\s*-', dir_name)
+                branch = branch_match.group(2) if branch_match else None
+                
+                branch_info[dir_tag] = {
+                    "name": dir_name,
+                    "branch": branch
+                }
+        
+        TTC_ROUTE_CACHE[route_id] = branch_info
+        logging.debug(f"Cached {len(branch_info)} directions for TTC route {route_id}")
+        return branch_info
+        
+    except Exception as e:
+        logging.warning(f"Failed to fetch TTC route config for {route_id}: {e}")
+        return {}
 
 
-def time_to_seconds(t):
-    h, m, s = map(int, t.split(":"))
-    return h * 3600 + m * 60 + s
+def extract_ttc_branch(dir_tag, route_id):
+    """
+    Extract branch letter from TTC dirTag using simple pattern matching.
+    Avoids blocking HTTP calls during live vehicle fetch.
+    
+    Args:
+        dir_tag: TTC dirTag (e.g., "52_0_52A")
+        route_id: TTC route ID (e.g., "52")
+        
+    Returns: branch letter (e.g., "A") or None
+    """
+    if not dir_tag or not route_id:
+        return None
+    
+    # Use simple regex pattern - handles 99% of cases like "52_0_52A" -> "A"
+    # Avoids making HTTP calls which would block the /vehicles endpoint
+    parts = str(dir_tag).split("_")
+    if len(parts) >= 3:
+        variant = parts[2]
+        # Check if variant is exactly routeNumber + 1 letter branch
+        branch_match = re.match(rf'^{re.escape(str(route_id))}([A-Z])$', variant)
+        if branch_match:
+            return branch_match.group(1)
+    
+    return None
 
 
-def format_gtfs_time(t):
-    h, m, s = map(int, t.split(":"))
-    day_offset = h // 24
-    h = h % 24
-    time_str = f"{h:02d}:{m:02d}"
-    if day_offset > 0:
-        return f"{time_str} +{day_offset}day"
-    return time_str
 
-
-def get_current_time_seconds():
-    now = datetime.now()
-    return now.hour * 3600 + now.minute * 60 + now.second
 
 
 def get_trip_info(trip_id, route_id=None, preferred_agency=None):
     """
-    Cross-reference a trip_id from the API with GTFS data.
+    Cross-reference a trip_id from the API with GTFS data using cached lookups.
     Falls back to route_id if trip_id lookup fails.
     Returns dict with route_name, destination, and route_id.
     """
     if not trip_id and not route_id:
         return None
 
-    # Helper function to convert numpy types to Python native types
-    def to_python_type(val):
-        if pd.isna(val):
-            return None
-        if hasattr(val, 'item'):  # numpy/pandas scalar
-            return val.item()
-        return val
-
-    # First, try to find by trip_id
+    # Fast O(1) cache lookup by trip_id (convert to string for consistent lookup)
     if trip_id:
-        # If preferred_agency is specified, ONLY search that agency
-        # Otherwise, search all agencies
-        if preferred_agency:
-            agencies = [preferred_agency] if preferred_agency in GTFS_DATA else []
-        else:
-            agencies = list(GTFS_DATA.keys())
-        for agency in agencies:
-            data = GTFS_DATA[agency]
-            trips = data["trips"]
-            routes = data["routes"]
+        cache_key = str(trip_id)
+        if cache_key in TRIP_INFO_CACHE:
+            cached_info = TRIP_INFO_CACHE[cache_key].copy()
+            # If preferred_agency specified, only return if agency matches
+            if preferred_agency and cached_info["agency"] != preferred_agency:
+                pass  # Continue to fallback
+            else:
+                return cached_info
 
-            # Find trip in GTFS - try both string and exact match
-            trip_row = trips[trips['trip_id'] == trip_id]
-
-            if trip_row.empty:
-                continue
-
-            # Get route info
-            route_id = to_python_type(trip_row['route_id'].values[0])
-            route_row = routes[routes['route_id'].astype(str) == str(route_id)]
-
-            if not route_row.empty:
-                route_name = to_python_type(route_row['route_long_name'].values[0])
-                route_short = to_python_type(route_row['route_short_name'].values[0])
-
-                # Get destination from trip_headsign, with fallback to route name
-                destination = "Unknown"
-                route_branch = None
-                
-                if 'trip_headsign' in trip_row.columns:
-                    val = trip_row['trip_headsign'].values[0]
-                    if pd.notna(val) and val != "":
-                        headsign = str(val).strip()
-                        
-                        # Try to extract branch from headsign with various patterns:
-                        # Pattern 1: "96B - DC Oshawa GO" -> branch B
-                        # Pattern 2: "East - 54A Lawrence East..." -> branch A
-                        # Pattern 3: "East - 54 Lawrence East..." -> no branch
-                        # Pattern 4: "41 - Pickering GO" -> no branch
-                        if " - " in headsign:
-                            parts = headsign.split(" - ")
-                            first_part = parts[0].strip()
-                            
-                            # Try extracting from first part (e.g., "96B")
-                            branch_match = re.search(r'(\d+)([A-Za-z]{1,2})$', first_part)
-                            if branch_match:
-                                # Has branch like "96B"
-                                route_branch = branch_match.group(2)
-                                destination = " - ".join(parts[1:]).strip()
-                            elif re.match(r'^\d+$', first_part):
-                                # Just a number like "41", no branch
-                                destination = " - ".join(parts[1:]).strip()
-                            else:
-                                # First part doesn't match, try second part (e.g., "East - 54A Lawrence...")
-                                if len(parts) > 1:
-                                    second_part = parts[1].strip()
-                                    # Look for route number + optional branch at start of second part
-                                    branch_match2 = re.match(r'^(\d+)([A-Za-z]{1,2})?\s+(.+)', second_part)
-                                    if branch_match2:
-                                        route_branch = branch_match2.group(2)  # May be None
-                                        # Extract destination after the route number+branch
-                                        destination = branch_match2.group(3).strip()
-                                    else:
-                                        destination = headsign
-                                else:
-                                    destination = headsign
-                        else:
-                            destination = headsign
-
-                # If still unknown, try to get from last stop
-                if destination == "Unknown":
-                    stop_times = data["stop_times"]
-                    stops = data["stops"]
-                    trip_stops = stop_times[stop_times['trip_id'] == trip_id].sort_values('stop_sequence')
-                    if not trip_stops.empty:
-                        last_stop_id = trip_stops.iloc[-1]['stop_id']
-                        last_stop = stops[stops['stop_id'] == last_stop_id]
-                        if not last_stop.empty:
-                            destination = to_python_type(last_stop['stop_name'].values[0])
-
-                # Determine vehicle type from GTFS route_type
-                route_type = int(route_row['route_type'].values[0]) if 'route_type' in route_row.columns else 3
-                # GTFS route types: 0=tram, 1=subway, 2=rail, 3=bus, 4=ferry, etc.
-                vehicle_type = "train" if route_type in [0, 1, 2] else "bus"
-
-                # Check if it's a streetcar (route 500-599)
-                vehicle_subtype = "streetcar" if is_streetcar(route_short) else "bus"
-
-                # If no branch extracted from headsign, try route_desc
-                if not route_branch and 'route_desc' in route_row.columns:
-                    branch_val = route_row['route_desc'].values[0]
-                    if pd.notna(branch_val) and branch_val != "":
-                        route_branch = to_python_type(branch_val)
-
-                return {
-                    "route_id": to_python_type(route_id),
-                    "route_short_name": to_python_type(route_short),
-                    "route_long_name": to_python_type(route_name),
-                    "destination": destination,
-                    "agency": agency,
-                    "vehicle_type": vehicle_type,
-                    "vehicle_subtype": vehicle_subtype,
-                    "route_branch": route_branch
-                }
-
-    # Fallback: try to find by route_id alone
+    # Fallback: try to find by route_id alone (less common, slower path)
     if route_id:
-        # If preferred_agency is specified, ONLY search that agency
-        # Otherwise, search all agencies
         if preferred_agency:
             agencies = [preferred_agency] if preferred_agency in GTFS_DATA else []
         else:
             agencies = list(GTFS_DATA.keys())
+        
         for agency in agencies:
             data = GTFS_DATA[agency]
             routes = data["routes"]
@@ -275,9 +309,7 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                 # Determine vehicle type from GTFS route_type
                 route_type = int(route_row['route_type'].values[0]) if 'route_type' in route_row.columns else 3
                 vehicle_type = "train" if route_type in [0, 1, 2] else "bus"
-
-                # Check if it's a streetcar (route 500-599)
-                vehicle_subtype = "streetcar" if is_streetcar(route_short) else "bus"
+                vehicle_subtype = "streetcar" if is_streetcar(route_short) else ("train" if vehicle_type == "train" else "bus")
 
                 # Get route description/branch if available
                 route_branch = None
@@ -294,7 +326,8 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                     "agency": agency,
                     "vehicle_type": vehicle_type,
                     "vehicle_subtype": vehicle_subtype,
-                    "route_branch": route_branch
+                    "route_branch": route_branch,
+                    "shape_id": None  # No specific trip, so no shape
                 }
 
     return None
@@ -804,167 +837,154 @@ def api_stop_connections(agency, stop_id):
     return jsonify({"routes": results})
 
 
+def fetch_metrolinx_predictions(stop_code, agency_name, requested_trip_id=None):
+    """
+    Shared helper to fetch predictions from Metrolinx API (GO Transit or UP Express).
+    
+    Args:
+        stop_code: The stop code to query
+        agency_name: "GO" or "UP" for logging
+        requested_trip_id: Optional trip_id to filter by
+        
+    Returns:
+        JSON response with predictions
+    """
+    METROLINX_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
+    
+    logging.info(f"========================================")
+    logging.info(f"Fetching {agency_name} predictions for stop_code: {stop_code}")
+    if requested_trip_id:
+        logging.info(f"  Filtering for trip_id: {requested_trip_id}")
+    
+    params = {"key": API_KEY} if API_KEY else {}
+    full_url = f"{METROLINX_STOP_URL}/{stop_code}"
+    
+    try:
+        r = requests.get(full_url, params=params, headers={'Accept': 'application/json'}, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        
+        next_service = data.get('NextService')
+        if not next_service:
+            logging.warning(f"[WARNING] No NextService data for stop {stop_code}")
+            return jsonify({'predictions': [], 'stop_code': stop_code, 'message': 'No service data available for this stop'})
+        
+        lines = next_service.get('Lines', [])
+        if not isinstance(lines, list):
+            lines = [lines] if lines else []
+        
+        # Extract trip number and route from trip_id
+        extracted_trip_number = None
+        if requested_trip_id:
+            extracted_trip_number, _ = extract_trip_details(requested_trip_id)
+            logging.debug(f"Looking for trip number: '{extracted_trip_number}'")
+        
+        predictions = []
+        exact_matches = []
+        
+        for line in lines:
+            trip_number = str(line.get('TripNumber', ''))
+            scheduled_time = line.get('ScheduledDepartureTime')
+            computed_time = line.get('ComputedDepartureTime')
+            
+            if not scheduled_time and not computed_time:
+                continue
+            
+            predicted_time = computed_time if computed_time else scheduled_time
+            
+            prediction_obj = {
+                'route_id': str(line.get('LineCode', '')),
+                'route_number': str(line.get('LineCode', '')),
+                'line_name': line.get('LineName', ''),
+                'predicted_time': predicted_time,
+                'scheduled_time': scheduled_time,
+                'status': line.get('DepartureStatus', ''),
+                'trip_number': trip_number
+            }
+            
+            # Check for exact trip match
+            if requested_trip_id and trip_number == extracted_trip_number:
+                logging.debug(f"  [MATCH] EXACT MATCH - Line {prediction_obj['route_id']}, Trip {trip_number}")
+                exact_matches.append(prediction_obj)
+            elif not requested_trip_id:
+                logging.debug(f"  [OK] Line: {prediction_obj['route_id']}, Trip: {trip_number}")
+                predictions.append(prediction_obj)
+        
+        # Use exact matches if found, otherwise use all
+        if exact_matches:
+            predictions = exact_matches
+            logging.info(f"[OK] Found exact trip match for trip {extracted_trip_number}")
+        elif requested_trip_id:
+            logging.warning(f"[WARNING] No exact predictions for trip {extracted_trip_number} at stop {stop_code}")
+        
+        response_data = {'predictions': predictions, 'stop_code': stop_code}
+        
+        if predictions:
+            trip_list = ", ".join([f"Trip {p['trip_number']}" for p in predictions])
+            logging.info(f"[OK] Returning {len(predictions)} predictions for stop {stop_code}: {trip_list}")
+        elif requested_trip_id:
+            if lines:
+                response_data['message'] = 'Trip not currently active at this stop'
+                response_data['available_trips_count'] = len(lines)
+            else:
+                response_data['message'] = 'No service data available'
+        else:
+            response_data['message'] = 'No upcoming service'
+        
+        logging.info(f"========================================")
+        return jsonify(response_data)
+        
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTP error fetching {agency_name} predictions for stop {stop_code}: {e}")
+        return jsonify({'predictions': [], 'error': str(e)}), 200
+    except Exception as e:
+        logging.error(f"Error fetching {agency_name} predictions for {stop_code}: {e}")
+        return jsonify({'predictions': [], 'error': str(e)}), 200
+
+
 @app.route("/vehicles")
 def vehicles():
+    from time import time as current_time
     output = []
+    start_time = current_time()
     
     logging.info("=== Fetching vehicles from all agencies ===")
 
     # Fetch GO Transit vehicles
     try:
         logging.debug("Fetching GO Transit vehicles...")
+        go_start = current_time()
         if not API_KEY:
             raise ValueError("Missing GO API key")
 
         r = requests.get(
             GO_VEHICLE_URL,
             params={"key": API_KEY},
-            timeout=5
+            timeout=8
         )
         r.raise_for_status()
         data = r.json()
         
         go_count = 0
         for entity in data.get("entity", []):
-            v = entity.get("vehicle")
-            if not v or "position" not in v:
-                continue
-
-            trip = v.get("trip", {})
-            trip_id = trip.get("trip_id", "")
-            route_id = trip.get("route_id", "")
-
-            # Cross-reference with GTFS
-            preferred_agency = infer_agency_for_route(route_id) or "GO"
-            trip_info = get_trip_info(trip_id, route_id, preferred_agency) if (trip_id or route_id) else None
-            if not trip_info and (trip_id or route_id):
-                trip_info = get_trip_info(trip_id, route_id)
-
-            vehicle_data = {
-                "lat": float(v["position"]["latitude"]),
-                "lon": float(v["position"]["longitude"]),
-                "route": route_id,
-                "trip": trip_id
-            }
-
-            # Add GTFS cross-reference if found
-            if trip_info:
-                vehicle_data.update({
-                    "route_long_name": trip_info["route_long_name"],
-                    "route_short_name": trip_info["route_short_name"],
-                    "destination": trip_info["destination"],
-                    "agency": trip_info["agency"],
-                    "vehicle_type": trip_info["vehicle_type"],
-                    "vehicle_subtype": trip_info.get("vehicle_subtype", "bus"),
-                    "route_branch": trip_info.get("route_branch")
-                })
-            else:
-                # Default to bus if no GTFS match
-                vehicle_data["agency"] = "GO"
-                vehicle_data["vehicle_type"] = "bus"
-                vehicle_data["vehicle_subtype"] = "bus"
-
-            output.append(vehicle_data)
-            go_count += 1
-            
-        logging.info(f"✓ GO Transit: {go_count} vehicles fetched")
-    except Exception as e:
-        logging.error(f"✗ Error fetching GO Transit vehicles: {e}", exc_info=True)
-
-    # Fetch UP Express vehicles
-    try:
-        logging.debug("Fetching UP Express vehicles...")
-        if not API_KEY:
-            raise ValueError("Missing UP API key")
-
-        r = requests.get(
-            UP_VEHICLE_URL,
-            params={"key": API_KEY},
-            timeout=5
-        )
-        r.raise_for_status()
-        data = r.json()
-        
-        up_count = 0
-        for entity in data.get("entity", []):
-            v = entity.get("vehicle")
-            if not v or "position" not in v:
-                continue
-
-            trip = v.get("trip", {})
-            trip_id = trip.get("trip_id", "")
-            route_id = trip.get("route_id", "")
-
-            # Cross-reference with GTFS
-            trip_info = get_trip_info(trip_id, route_id, "UP") if (trip_id or route_id) else None
-
-            vehicle_data = {
-                "lat": float(v["position"]["latitude"]),
-                "lon": float(v["position"]["longitude"]),
-                "route": route_id,
-                "trip": trip_id
-            }
-
-            if trip_info:
-                vehicle_data.update({
-                    "route_long_name": trip_info["route_long_name"],
-                    "route_short_name": trip_info["route_short_name"],
-                    "destination": trip_info["destination"],
-                    "agency": trip_info["agency"],
-                    "vehicle_type": trip_info["vehicle_type"],
-                    "vehicle_subtype": trip_info.get("vehicle_subtype", "train"),
-                    "route_branch": trip_info.get("route_branch")
-                })
-            else:
-                vehicle_data["agency"] = "UP"
-                vehicle_data["vehicle_type"] = "train"
-                vehicle_data["vehicle_subtype"] = "train"
-
-            output.append(vehicle_data)
-            up_count += 1
-            
-        logging.info(f"✓ UP Express: {up_count} vehicles fetched")
-    except Exception as e:
-        logging.error(f"✗ Error fetching UP Express vehicles: {e}", exc_info=True)
-
-    # Fetch TTC vehicles
-    try:
-        logging.debug("Fetching TTC vehicles...")
-        r = requests.get(TTC_VEHICLE_URL, timeout=5)
-        r.raise_for_status()
-        root = ET.fromstring(r.content)
-        
-        ttc_count = 0
-        for vehicle in root.findall(".//vehicle"):
             try:
-                # TTC API returns data in attributes, not child elements
-                trip_id = vehicle.get("tripTag")
-                route_id = vehicle.get("routeTag")
-                dir_tag = vehicle.get("dirTag")  # Contains branch info like "52_0_52B"
-                lat = float(vehicle.get("lat"))
-                lon = float(vehicle.get("lon"))
-                
-                # Extract branch from dirTag if available (e.g., "52_0_52B" -> "B")
-                ttc_branch = None
-                if dir_tag and route_id:
-                    # dirTag format is usually "routeNum_direction_routeVariant"
-                    # e.g., "52_0_52B" means route 52, direction 0, variant 52B
-                    parts = dir_tag.split("_")
-                    if len(parts) >= 3:
-                        variant = parts[2]
-                        # Check if variant is exactly routeNumber + 1-2 letter branch
-                        # e.g., "52B" = route 52 + branch B (valid)
-                        # but "53FSST" ≠ route 53 + branch (invalid, FSST is not a branch)
-                        branch_match = re.match(f'^{re.escape(str(route_id))}([A-Za-z]{{1,2}})$', variant)
-                        if branch_match:
-                            ttc_branch = branch_match.group(1)
+                v = entity.get("vehicle")
+                if not v or "position" not in v:
+                    continue
 
-                # Cross-reference with GTFS - pass route_id as fallback
-                trip_info = get_trip_info(trip_id, route_id, "TTC") if (trip_id or route_id) else None
+                trip = v.get("trip", {})
+                trip_id = trip.get("trip_id", "")
+                route_id = trip.get("route_id", "")
+
+                # Cross-reference with GTFS
+                preferred_agency = infer_agency_for_route(route_id) or "GO"
+                trip_info = get_trip_info(trip_id, route_id, preferred_agency) if (trip_id or route_id) else None
+                if not trip_info and (trip_id or route_id):
+                    trip_info = get_trip_info(trip_id, route_id)
 
                 vehicle_data = {
-                    "lat": lat,
-                    "lon": lon,
+                    "lat": float(v["position"]["latitude"]),
+                    "lon": float(v["position"]["longitude"]),
                     "route": route_id,
                     "trip": trip_id
                 }
@@ -978,339 +998,213 @@ def vehicles():
                         "agency": trip_info["agency"],
                         "vehicle_type": trip_info["vehicle_type"],
                         "vehicle_subtype": trip_info.get("vehicle_subtype", "bus"),
-                        "route_branch": trip_info.get("route_branch") or ttc_branch  # Use GTFS branch or TTC API branch
+                        "route_branch": trip_info.get("route_branch"),
+                        "shape_id": trip_info.get("shape_id")
                     })
                 else:
-                    # Default TTC with streetcar detection based on route number (500-599)
-                    vehicle_data["agency"] = "TTC"
+                    # Default to bus if no GTFS match
+                    vehicle_data["agency"] = "GO"
                     vehicle_data["vehicle_type"] = "bus"
-                    vehicle_data["vehicle_subtype"] = "streetcar" if is_streetcar(route_id) else "bus"
-                    # Use branch from TTC API if available
-                    if ttc_branch:
-                        vehicle_data["route_branch"] = ttc_branch
+                    vehicle_data["vehicle_subtype"] = "bus"
 
                 output.append(vehicle_data)
-                ttc_count += 1
-            except (ValueError, TypeError, AttributeError) as e:
-                logging.debug(f"Skipping TTC vehicle: {e}")
+                go_count += 1
+            except Exception as e:
+                logging.debug(f"Skipping GO vehicle: {e}")
                 continue
-                
-        logging.info(f"✓ TTC: {ttc_count} vehicles fetched")
+            
+        elapsed = current_time() - go_start
+        logging.info(f"[OK] GO Transit: {go_count} vehicles fetched in {elapsed:.2f}s")
     except Exception as e:
-        logging.error(f"✗ Error fetching TTC vehicles: {e}", exc_info=True)
+        logging.error(f"[ERROR] Error fetching GO Transit vehicles: {e}")
+
+    # Fetch UP Express vehicles
+    try:
+        logging.debug("Fetching UP Express vehicles...")
+        up_start = current_time()
+        if not API_KEY:
+            raise ValueError("Missing UP API key")
+
+        r = requests.get(
+            UP_VEHICLE_URL,
+            params={"key": API_KEY},
+            timeout=8
+        )
+        r.raise_for_status()
+        data = r.json()
+        
+        up_count = 0
+        for entity in data.get("entity", []):
+            try:
+                v = entity.get("vehicle")
+                if not v or "position" not in v:
+                    continue
+
+                trip = v.get("trip", {})
+                trip_id = trip.get("trip_id", "")
+                route_id = trip.get("route_id", "")
+
+                # Cross-reference with GTFS
+                trip_info = get_trip_info(trip_id, route_id, "UP") if (trip_id or route_id) else None
+
+                vehicle_data = {
+                    "lat": float(v["position"]["latitude"]),
+                    "lon": float(v["position"]["longitude"]),
+                    "route": route_id,
+                    "trip": trip_id
+                }
+
+                if trip_info:
+                    vehicle_data.update({
+                        "route_long_name": trip_info["route_long_name"],
+                        "route_short_name": trip_info["route_short_name"],
+                        "destination": trip_info["destination"],
+                        "agency": trip_info["agency"],
+                        "vehicle_type": trip_info["vehicle_type"],
+                        "vehicle_subtype": trip_info.get("vehicle_subtype", "train"),
+                        "route_branch": trip_info.get("route_branch"),
+                        "shape_id": trip_info.get("shape_id")
+                    })
+                else:
+                    vehicle_data["agency"] = "UP"
+                    vehicle_data["vehicle_type"] = "train"
+                    vehicle_data["vehicle_subtype"] = "train"
+
+                output.append(vehicle_data)
+                up_count += 1
+            except Exception as e:
+                logging.debug(f"Skipping UP vehicle: {e}")
+                continue
+            
+        elapsed = current_time() - up_start
+        logging.info(f"[OK] UP Express: {up_count} vehicles fetched in {elapsed:.2f}s")
+    except Exception as e:
+        logging.error(f"[ERROR] Error fetching UP Express vehicles: {e}")
+
+    # Fetch TTC vehicles
+    try:
+        logging.debug("Fetching TTC vehicles...")
+        ttc_start = current_time()
+        
+        if GTFS_RT_AVAILABLE:
+            # Use new GTFS-RT API
+            r = requests.get(TTC_VEHICLE_URL, timeout=8)
+            r.raise_for_status()
+            
+            feed = gtfs_realtime_pb2.FeedMessage()
+            feed.ParseFromString(r.content)
+            
+            ttc_count = 0
+            logging.debug(f"TTC GTFS-RT API returned {len(feed.entity)} entities")
+            
+            for entity in feed.entity:
+                if not entity.HasField('vehicle'):
+                    continue
+                    
+                try:
+                    vehicle = entity.vehicle
+                    
+                    # Extract vehicle position
+                    if not vehicle.HasField('position'):
+                        continue
+                        
+                    lat = vehicle.position.latitude
+                    lon = vehicle.position.longitude
+                    
+                    # Extract trip and route information
+                    trip_id = vehicle.trip.trip_id if vehicle.HasField('trip') and vehicle.trip.HasField('trip_id') else None
+                    route_id = vehicle.trip.route_id if vehicle.HasField('trip') and vehicle.trip.HasField('route_id') else None
+                    
+                    # Cross-reference with GTFS
+                    trip_info = get_trip_info(trip_id, route_id, "TTC") if (trip_id or route_id) else None
+
+                    vehicle_data = {
+                        "lat": lat,
+                        "lon": lon,
+                        "route": route_id,
+                        "trip": trip_id
+                    }
+
+                    # Add GTFS cross-reference if found
+                    if trip_info:
+                        vehicle_data.update({
+                            "route_long_name": trip_info["route_long_name"],
+                            "route_short_name": trip_info["route_short_name"],
+                            "destination": trip_info["destination"],
+                            "agency": trip_info["agency"],
+                            "vehicle_type": trip_info["vehicle_type"],
+                            "vehicle_subtype": trip_info.get("vehicle_subtype", "bus"),
+                            "route_branch": trip_info.get("route_branch"),
+                            "shape_id": trip_info.get("shape_id")
+                        })
+                    else:
+                        # Default TTC with streetcar detection based on route number (500-599)
+                        vehicle_data["agency"] = "TTC"
+                        vehicle_data["vehicle_type"] = "bus"
+                        vehicle_data["vehicle_subtype"] = "streetcar" if is_streetcar(route_id) else "bus"
+
+                    output.append(vehicle_data)
+                    ttc_count += 1
+                except (ValueError, TypeError, AttributeError) as e:
+                    logging.debug(f"Skipping TTC vehicle: {e}")
+                    continue
+                    
+            elapsed = current_time() - ttc_start
+            logging.info(f"[OK] TTC: {ttc_count} vehicles fetched in {elapsed:.2f}s")
+        else:
+            logging.warning("[WARN] TTC vehicles skipped - gtfs-realtime-bindings not installed")
+            
+    except Exception as e:
+        logging.error(f"[ERROR] Error fetching TTC vehicles: {e}")
     
-    logging.info(f"=== Total vehicles returned: {len(output)} ===")
+    total_elapsed = current_time() - start_time
+    logging.info(f"=== Total vehicles returned: {len(output)} (took {total_elapsed:.2f}s) ===")
     return jsonify(output)
 
 
 @app.route("/api/go-transit-stop/<stop_code>")
 def get_go_transit_predictions(stop_code):
     """Get GO Transit stop predictions for a specific stop, optionally filtered by trip_id"""
-    try:
-        # Get optional trip_id query parameter
-        requested_trip_id = request.args.get('trip_id', None)
-        
-        GO_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
-        
-        logging.info(f"========================================")
-        logging.info(f"Fetching GO Transit predictions for stop_code: {stop_code}")
-        logging.info(f"  Stop code type: {type(stop_code)}, value: '{stop_code}'")
-        if requested_trip_id:
-            logging.info(f"  Filtering for trip_id: {requested_trip_id}")
-        
-        # Use API key in params
-        params = {"key": API_KEY} if API_KEY else {}
-        
-        full_url = f"{GO_STOP_URL}/{stop_code}"
-        logging.debug(f"Request URL: {full_url} with params: {params}")
-        
-        r = requests.get(
-            full_url,
-            params=params,
-            headers={'Accept': 'application/json'},
-            timeout=5
-        )
-        
-        logging.debug(f"API Response Status: {r.status_code}")
-        r.raise_for_status()
-        data = r.json()
-        
-        logging.debug(f"GO Transit API response for stop {stop_code}: {data}")
-        
-        # Extract predictions from the API response
-        predictions = []
-        
-        # Check if NextService exists and has Lines
-        next_service = data.get('NextService')
-        if not next_service:
-            logging.warning(f"⚠️ No NextService data for stop {stop_code}")
-            logging.warning(f"   API Response: {data}")
-            return jsonify({'predictions': [], 'stop_code': stop_code, 'message': 'No service data available for this stop'})
-        
-        lines = next_service.get('Lines', [])
-        if not isinstance(lines, list):
-            lines = [lines] if lines else []
-        
-        if not lines:
-            logging.warning(f"⚠️ No Lines data for stop {stop_code}")
-            logging.warning(f"   NextService: {next_service}")
-        
-        # Extract trip number from GTFS trip_id (format: YYYYMMDD-route-tripnumber)
-        extracted_trip_number = None
-        extracted_route = None
-        if requested_trip_id:
-            trip_parts = str(requested_trip_id).split('-')
-            if len(trip_parts) >= 3:
-                extracted_trip_number = trip_parts[-1]
-                extracted_route = trip_parts[1]  # Get route code (e.g., '40' from '20260424-40-40454')
-            else:
-                extracted_trip_number = str(requested_trip_id)
-            logging.debug(f"Extracted trip number '{extracted_trip_number}' and route '{extracted_route}' from trip_id '{requested_trip_id}'")
-        
-        exact_match = []
-        route_match = []
-        
-        for line in lines:
-            line_code = str(line.get('LineCode', ''))
-            line_name = line.get('LineName', '')
-            trip_number = str(line.get('TripNumber', ''))
-            
-            # Get departure times
-            scheduled_time = line.get('ScheduledDepartureTime')
-            computed_time = line.get('ComputedDepartureTime')
-            
-            # Skip if no times available
-            if not scheduled_time and not computed_time:
-                continue
-            
-            # Use computed time as prediction if available, otherwise use scheduled
-            predicted_time = computed_time if computed_time else scheduled_time
-            
-            prediction_obj = {
-                'route_id': line_code,
-                'route_number': line_code,
-                'line_name': line_name,
-                'predicted_time': predicted_time,
-                'scheduled_time': scheduled_time,
-                'status': line.get('DepartureStatus', ''),
-                'trip_number': trip_number
-            }
-            
-            # Check for exact trip match ONLY
-            # Each trip is unique - strict cross reference
-            if requested_trip_id and trip_number == extracted_trip_number:
-                logging.debug(f"  ✓✓ EXACT MATCH - Line {line_code}, Trip {trip_number}, Time: {predicted_time}")
-                exact_match.append(prediction_obj)
-            # No filter - include all (when not searching for specific trip)
-            elif not requested_trip_id:
-                logging.debug(f"  ✓ Line: {line_code}/{line_name}, Trip: {trip_number}, Time: {predicted_time}")
-                predictions.append(prediction_obj)
-        
-        # Only use exact match - strict cross reference
-        if exact_match:
-            predictions = exact_match
-            logging.info(f"✓ Found exact trip match for trip {extracted_trip_number}")
-        elif requested_trip_id:
-            # No exact match - show nothing (strict mode)
-            logging.warning(f"⚠️ No exact predictions for trip {extracted_trip_number} at stop {stop_code}")
-        
-        logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
-        
-        response_data = {'predictions': predictions, 'stop_code': stop_code}
-        
-        if predictions:
-            trip_list = ", ".join([f"Trip {p['trip_number']}" for p in predictions])
-            logging.info(f"✓ Returning {len(predictions)} predictions for stop {stop_code}: {trip_list}")
-        elif requested_trip_id:
-            # No predictions found - strict mode means no fallback
-            logging.warning(f"⚠️ No predictions for stop {stop_code} matching trip {requested_trip_id}")
-            
-            # Let's check if there are ANY trips at this stop
-            if lines:
-                available_trips = [str(line.get('TripNumber', '')) for line in lines if line.get('TripNumber')]
-                available_routes = [str(line.get('LineCode', '')) for line in lines if line.get('LineCode')]
-                logging.info(f"   Available at this stop: Routes {', '.join(set(available_routes))}, Trips: {', '.join(available_trips[:5])}...")
-                response_data['message'] = 'Trip not currently active at this stop'
-                response_data['available_trips_count'] = len(lines)
-            else:
-                response_data['message'] = 'No service data available'
-        else:
-            logging.warning(f"⚠️ No predictions found for stop {stop_code} (no service scheduled)")
-            response_data['message'] = 'No upcoming service'
-        
-        logging.info(f"========================================")
-        return jsonify(response_data)
-        
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error fetching GO Transit stop {stop_code}: {e}")
-        return jsonify({'predictions': [], 'error': str(e)}), 200
-    except Exception as e:
-        logging.error(f"Error fetching GO Transit stop predictions for {stop_code}: {e}")
-        return jsonify({'predictions': [], 'error': str(e)}), 200
+    requested_trip_id = request.args.get('trip_id', None)
+    return fetch_metrolinx_predictions(stop_code, "GO Transit", requested_trip_id)
 
 
 @app.route("/api/up-express-stop/<stop_code>")
 def get_up_express_predictions(stop_code):
     """Get UP Express stop predictions for a specific stop, optionally filtered by trip_id"""
-    try:
-        # Get optional trip_id query parameter
-        requested_trip_id = request.args.get('trip_id', None)
-        
-        # UP Express uses the same NextService API as GO Transit (both are Metrolinx)
-        UP_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
-        
-        logging.info(f"========================================")
-        logging.info(f"Fetching UP Express predictions for stop_code: {stop_code}")
-        logging.info(f"  Stop code type: {type(stop_code)}, value: '{stop_code}'")
-        if requested_trip_id:
-            logging.info(f"  Filtering for trip_id: {requested_trip_id}")
-        
-        # Use API key in params
-        params = {"key": API_KEY} if API_KEY else {}
-        
-        full_url = f"{UP_STOP_URL}/{stop_code}"
-        logging.debug(f"Request URL: {full_url} with params: {params}")
-        
-        r = requests.get(
-            full_url,
-            params=params,
-            headers={'Accept': 'application/json'},
-            timeout=5
-        )
-        
-        logging.debug(f"API Response Status: {r.status_code}")
-        r.raise_for_status()
-        data = r.json()
-        
-        logging.debug(f"UP Express API response for stop {stop_code}: {data}")
-        
-        # Extract predictions from the API response
-        predictions = []
-        
-        # Check if NextService exists and has Lines
-        next_service = data.get('NextService')
-        if not next_service:
-            logging.warning(f"⚠️ No NextService data for stop {stop_code}")
-            logging.warning(f"   API Response: {data}")
-            return jsonify({'predictions': [], 'stop_code': stop_code, 'message': 'No service data available for this stop'})
-        
-        lines = next_service.get('Lines', [])
-        if not isinstance(lines, list):
-            lines = [lines] if lines else []
-        
-        if not lines:
-            logging.warning(f"⚠️ No Lines data for stop {stop_code}")
-            logging.warning(f"   NextService: {next_service}")
-        else:
-            # Log all available lines for debugging
-            logging.info(f"  Found {len(lines)} lines at stop {stop_code}")
-            for line in lines[:5]:  # Log first 5
-                logging.info(f"    - LineCode: {line.get('LineCode')}, Trip: {line.get('TripNumber')}, Line: {line.get('LineName')}")
-        
-        # Extract trip number from GTFS trip_id
-        # UP Express format: YYYYMMDD-tripnumber (2 parts)
-        # GO Transit format: YYYYMMDD-route-tripnumber (3 parts)
-        extracted_trip_number = None
-        extracted_route = None
-        if requested_trip_id:
-            trip_parts = str(requested_trip_id).split('-')
-            if len(trip_parts) >= 3:
-                # GO Transit format: YYYYMMDD-route-tripnumber
-                extracted_trip_number = trip_parts[-1]
-                extracted_route = trip_parts[1]  # Get route code
-            elif len(trip_parts) == 2:
-                # UP Express format: YYYYMMDD-tripnumber
-                extracted_trip_number = trip_parts[1]
-            else:
-                extracted_trip_number = str(requested_trip_id)
-            logging.info(f"  Looking for trip number: '{extracted_trip_number}' (route: '{extracted_route}')")
-        
-        exact_match = []
-        route_match = []
-        
-        for line in lines:
-            line_code = str(line.get('LineCode', ''))
-            line_name = line.get('LineName', '')
-            trip_number = str(line.get('TripNumber', ''))
-            
-            # Get departure times
-            scheduled_time = line.get('ScheduledDepartureTime')
-            computed_time = line.get('ComputedDepartureTime')
-            
-            # Skip if no times available
-            if not scheduled_time and not computed_time:
-                continue
-            
-            # Use computed time as prediction if available, otherwise use scheduled
-            predicted_time = computed_time if computed_time else scheduled_time
-            
-            prediction_obj = {
-                'route_id': line_code,
-                'route_number': line_code,
-                'line_name': line_name,
-                'predicted_time': predicted_time,
-                'scheduled_time': scheduled_time,
-                'status': line.get('DepartureStatus', ''),
-                'trip_number': trip_number
-            }
-            
-            # Check for exact trip match ONLY
-            # Each trip is unique - no fallback matching allowed
-            if requested_trip_id and trip_number == extracted_trip_number:
-                logging.debug(f"  ✓✓ EXACT MATCH - Line {line_code}, Trip {trip_number}, Time: {predicted_time}")
-                exact_match.append(prediction_obj)
-            # No filter - include all (when not searching for specific trip)
-            elif not requested_trip_id:
-                logging.debug(f"  ✓ Line: {line_code}/{line_name}, Trip: {trip_number}, Time: {predicted_time}")
-                predictions.append(prediction_obj)
-        
-        # Only use exact match - strict cross reference
-        response_data = {'predictions': [], 'stop_code': stop_code}
-        
-        if exact_match:
-            predictions = exact_match
-            logging.info(f"✓ Found exact trip match for trip {extracted_trip_number}")
-        elif requested_trip_id:
-            # No exact match - show nothing (strict mode)
-            logging.warning(f"⚠️ No exact predictions for trip {extracted_trip_number} at stop {stop_code}")
-        
-        logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
-        
-        response_data['predictions'] = predictions
-        
-        if predictions:
-            trip_list = ", ".join([f"Trip {p['trip_number']}" for p in predictions])
-            match_type = response_data.get('match_type', 'exact')
-            if match_type == 'route':
-                logging.info(f"✓ Returning {len(predictions)} predictions for stop {stop_code} (route match): {trip_list}")
-            else:
-                logging.info(f"✓ Returning {len(predictions)} predictions for stop {stop_code}: {trip_list}")
-        elif requested_trip_id:
-            # No predictions found
-            logging.warning(f"⚠️ No predictions for stop {stop_code} matching trip {requested_trip_id}")
-            
-            # Let's check if there are ANY trips at this stop
-            if lines:
-                available_trips = [str(line.get('TripNumber', '')) for line in lines if line.get('TripNumber')]
-                available_routes = [str(line.get('LineCode', '')) for line in lines if line.get('LineCode')]
-                logging.info(f"   Available at this stop: Routes {', '.join(set(available_routes))}, Trips: {', '.join(available_trips[:5])}...")
-                response_data['message'] = 'Trip not in active tracking window'
-                response_data['available_trips_count'] = len(lines)
-            else:
-                response_data['message'] = 'No service data available'
-        else:
-            logging.warning(f"⚠️ No predictions found for stop {stop_code} (no service scheduled)")
-            response_data['message'] = 'No upcoming service'
-        
-        logging.info(f"========================================")
-        return jsonify(response_data)
-        
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error fetching UP Express stop {stop_code}: {e}")
-        return jsonify({'predictions': [], 'error': str(e)}), 200
-    except Exception as e:
-        logging.error(f"Error fetching UP Express stop predictions for {stop_code}: {e}")
-        return jsonify({'predictions': [], 'error': str(e)}), 200
+    requested_trip_id = request.args.get('trip_id', None)
+    return fetch_metrolinx_predictions(stop_code, "UP Express", requested_trip_id)
+
+
+@app.route("/api/shape/<agency>/<shape_id>")
+def get_shape(agency, shape_id):
+    """Get polyline coordinates for a shape_id (for route highlighting)"""
+    if agency not in GTFS_DATA:
+        return jsonify({"error": "Agency not found"}), 404
+
+    data = GTFS_DATA[agency]
+    shapes = data["shapes"]
+    
+    if shapes is None:
+        return jsonify({"coordinates": []})
+    
+    shape_coords = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
+    
+    if shape_coords.empty:
+        return jsonify({"coordinates": []})
+    
+    result = []
+    for idx, row in shape_coords.iterrows():
+        result.append({
+            "lat": float(row['shape_pt_lat']),
+            "lon": float(row['shape_pt_lon'])
+        })
+    
+    return jsonify({
+        "shape_id": shape_id,
+        "agency": agency,
+        "coordinates": result
+    })
 
 
 @app.route("/trip/<trip_id>")
@@ -1330,6 +1224,211 @@ def trip_details(trip_id):
         "stops": stops,
         "shape": shape
     })
+
+
+@app.route("/api/ttc-trip-alerts")
+def get_ttc_trip_alerts():
+    """Get TTC trip updates and alerts from GTFS-RT API"""
+    if not GTFS_RT_AVAILABLE:
+        return jsonify({
+            'error': 'GTFS-realtime bindings not installed',
+            'message': 'Install with: pip install gtfs-realtime-bindings'
+        }), 503
+    
+    # Optional filters
+    route_id = request.args.get('route_id', None)
+    trip_id = request.args.get('trip_id', None)
+    
+    try:
+        logging.debug(f"Fetching TTC trip alerts (route={route_id}, trip={trip_id})")
+        r = requests.get(TTC_TRIP_ALERTS_URL, timeout=8)
+        r.raise_for_status()
+        
+        feed = gtfs_realtime_pb2.FeedMessage()
+        feed.ParseFromString(r.content)
+        
+        alerts = []
+        
+        for entity in feed.entity:
+            if not entity.HasField('trip_update'):
+                continue
+                
+            trip_update = entity.trip_update
+            
+            # Extract trip information
+            update_trip_id = trip_update.trip.trip_id if trip_update.HasField('trip') and trip_update.trip.HasField('trip_id') else None
+            update_route_id = trip_update.trip.route_id if trip_update.HasField('trip') and trip_update.trip.HasField('route_id') else None
+            
+            # Apply filters
+            if route_id and update_route_id != route_id:
+                continue
+            if trip_id and update_trip_id != trip_id:
+                continue
+            
+            # Parse stop time updates
+            stop_time_updates = []
+            for stop_update in trip_update.stop_time_update:
+                update_data = {
+                    'stop_id': stop_update.stop_id if stop_update.HasField('stop_id') else None,
+                    'stop_sequence': stop_update.stop_sequence if stop_update.HasField('stop_sequence') else None
+                }
+                
+                # Arrival info
+                if stop_update.HasField('arrival'):
+                    arrival = stop_update.arrival
+                    update_data['arrival'] = {
+                        'delay': arrival.delay if arrival.HasField('delay') else None,
+                        'time': arrival.time if arrival.HasField('time') else None
+                    }
+                
+                # Departure info
+                if stop_update.HasField('departure'):
+                    departure = stop_update.departure
+                    update_data['departure'] = {
+                        'delay': departure.delay if departure.HasField('delay') else None,
+                        'time': departure.time if departure.HasField('time') else None
+                    }
+                
+                stop_time_updates.append(update_data)
+            
+            alert_data = {
+                'entity_id': entity.id,
+                'trip_id': update_trip_id,
+                'route_id': update_route_id,
+                'vehicle_id': trip_update.vehicle.id if trip_update.HasField('vehicle') and trip_update.vehicle.HasField('id') else None,
+                'timestamp': trip_update.timestamp if trip_update.HasField('timestamp') else None,
+                'stop_time_updates': stop_time_updates
+            }
+            
+            alerts.append(alert_data)
+        
+        logging.info(f"[OK] TTC trip alerts: {len(alerts)} updates returned")
+        
+        return jsonify({
+            'timestamp': feed.header.timestamp if feed.header.HasField('timestamp') else None,
+            'alerts': alerts,
+            'total_updates': len(alerts)
+        })
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching TTC trip alerts: {e}")
+        return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        logging.error(f"Error parsing TTC trip alerts: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/logs")
+def view_logs():
+    """Return debug logs as JSON with optional line limit"""
+    lines = request.args.get('lines', default=100, type=int)
+    
+    if not os.path.exists(log_file):
+        return jsonify({'error': 'Log file not found', 'logs': []})
+    
+    try:
+        with open(log_file, 'r') as f:
+            all_lines = f.readlines()
+        
+        # Return last N lines
+        recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        
+        return jsonify({
+            'total_lines': len(all_lines),
+            'returned_lines': len(recent_lines),
+            'logs': recent_lines
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'logs': []}), 500
+
+
+@app.route("/logs")
+def logs_page():
+    """Display logs in a simple HTML page"""
+    try:
+        if not os.path.exists(log_file):
+            return "<h1>Debug Logs</h1><p>Log file not found</p>"
+        
+        with open(log_file, 'r') as f:
+            logs_content = f.read()
+        
+        # Convert to HTML with proper formatting
+        logs_html = logs_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Debug Logs</title>
+            <style>
+                body {{ font-family: monospace; background: #f5f5f5; margin: 20px; }}
+                .container {{ background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                pre {{ background: #333; color: #0f0; padding: 15px; border-radius: 5px; overflow-x: auto; max-height: 600px; overflow-y: auto; }}
+                .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }}
+                button {{ padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }}
+                button:hover {{ background: #0056b3; }}
+                .info {{ font-size: 12px; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Debug Logs</h1>
+                    <div>
+                        <button onclick="location.reload()">Refresh</button>
+                        <button onclick="downloadLogs()">Download</button>
+                        <button onclick="clearLogs()">Clear Logs</button>
+                    </div>
+                </div>
+                <p class="info">Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <pre>{logs_html}</pre>
+            </div>
+            
+            <script>
+                function downloadLogs() {{
+                    fetch('/api/logs?lines=10000')
+                        .then(res => res.json())
+                        .then(data => {{
+                            const content = data.logs.join('');
+                            const blob = new Blob([content], {{ type: 'text/plain' }});
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = 'debug.log';
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                        }});
+                }}
+                
+                function clearLogs() {{
+                    if (confirm('Are you sure you want to clear all logs?')) {{
+                        fetch('/api/logs/clear', {{ method: 'POST' }})
+                            .then(() => location.reload());
+                    }}
+                }}
+                
+                // Auto-refresh every 5 seconds
+                setTimeout(() => location.reload(), 5000);
+            </script>
+        </body>
+        </html>
+        """
+        return html
+    except Exception as e:
+        return f"<h1>Error</h1><p>{str(e)}</p>"
+
+
+@app.route("/api/logs/clear", methods=['POST'])
+def clear_logs():
+    """Clear the debug log file"""
+    try:
+        if os.path.exists(log_file):
+            open(log_file, 'w').close()
+            logging.info("Debug logs cleared")
+            return jsonify({'success': True, 'message': 'Logs cleared'})
+        return jsonify({'success': False, 'message': 'Log file not found'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == "__main__":

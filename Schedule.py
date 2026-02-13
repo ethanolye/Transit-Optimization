@@ -1,6 +1,7 @@
 import zipfile
 import pandas as pd
 from datetime import datetime, timedelta
+from utils import time_to_seconds, format_gtfs_time, get_current_time_seconds, is_weekend
 
 # =========================
 # Transit Agency Selector
@@ -38,31 +39,6 @@ TARGET_STOP_SEQUENCE = None
 # DEBUG SETTINGS
 # =========================
 pd.set_option('display.max_rows', None)
-
-# =========================
-# TIME HELPERS
-# =========================
-def time_to_seconds(t):
-    h, m, s = map(int, t.split(":"))
-    return h * 3600 + m * 60 + s
-
-def format_gtfs_time(t):
-    h, m, s = map(int, t.split(":"))
-    day_offset = h // 24
-    h = h % 24
-    time_str = f"{h:02d}:{m:02d}"
-    if day_offset > 0:
-        return f"{time_str} +{day_offset}day"
-    return time_str
-
-def get_current_time_seconds():
-    """Get current time in seconds since midnight"""
-    now = datetime.now()
-    return now.hour * 3600 + now.minute * 60 + now.second
-
-def is_weekend():
-    """Check if today is Saturday or Sunday"""
-    return datetime.now().weekday() >= 5  # 5=Saturday, 6=Sunday
 
 # =========================
 # LOAD GTFS FILES

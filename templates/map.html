@@ -969,9 +969,11 @@
 
             // Set header info
             if (data.info) {
-                document.getElementById("route-name").textContent = data.info.route_long_name || data.info.route_id;
+                // Display full route long name as the main title
+                const routeLongName = data.info.route_long_name || data.info.route_id || "Unknown Route";
+                document.getElementById("route-name").textContent = routeLongName;
                 
-                // Build route number with branch
+                // Build route number with branch for secondary display
                 let routeNumber = data.info.route_short_name || data.info.route_id || "Unknown";
                 
                 // Add branch if available
@@ -982,11 +984,12 @@
                 // Get destination
                 let destination = data.info.destination || "Unknown";
                 
-                // Display as "12C - {destination}"
-                document.getElementById("route-number").textContent = `${routeNumber} - ${destination}`;
+                // Display route number separately from destination
+                document.getElementById("route-number").textContent = `Route ${routeNumber}`;
                 
-                // Hide the separate destination element since it's now combined
-                document.getElementById("destination").style.display = "none";
+                // Show destination separately
+                document.getElementById("destination").textContent = `To: ${destination}`;
+                document.getElementById("destination").style.display = "block";
                 
                 // Hide branch element since it's now part of route number
                 document.getElementById("route-branch").style.display = "none";
@@ -1385,7 +1388,8 @@
                     }
 
                     console.log(`[Vehicles] Creating marker for ${v.agency} route ${v.route} (${vehicleKey})`);
-                    const marker = L.marker([v.lat, v.lon], { icon: icon }).addTo(map);
+                    // Don't add to map yet - let renderVehicles decide visibility
+                    const marker = L.marker([v.lat, v.lon], { icon: icon });
                     
                     // Build route number with branch
                     let routeDisplay = v.route_short_name || v.route || "Unknown";

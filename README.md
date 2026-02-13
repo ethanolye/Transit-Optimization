@@ -4,7 +4,7 @@ You wanted a README, you got a README
 Install Dependencies 
 
 
-py -m pip install flask requests pandas python-dotenv 
+py -m pip install flask requests pandas python-dotenv gtfs-realtime-bindings
 
 ------------------------------------------------------------------------------------------
 Instructions:
