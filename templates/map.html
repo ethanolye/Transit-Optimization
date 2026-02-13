@@ -5,9 +5,14 @@
     <title>Transit Optimization | Live Vehicles</title>
 
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         html, body, #map {
             height: 100%;
             margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         }
 
         .nav-button {
@@ -15,124 +20,219 @@
             bottom: 24px;
             right: 24px;
             z-index: 1001;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 12px 24px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+            padding: 14px 26px;
+            border-radius: 12px;
+            box-shadow: 0 4px 14px rgba(8, 145, 178, 0.35);
             text-decoration: none;
-            color: #333;
+            color: #ffffff;
             font-weight: 600;
-            transition: all 0.3s;
+            font-size: 15px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
             align-items: center;
-            gap: 8px;
-            border: 1px solid rgba(17, 24, 39, 0.1);
-            backdrop-filter: blur(6px);
+            gap: 10px;
+            border: none;
+            backdrop-filter: blur(10px);
         }
 
         .nav-button:hover {
-            background: #0f766e;
-            color: #f8fafc;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            background: linear-gradient(135deg, #0e7490 0%, #155e75 100%);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(8, 145, 178, 0.45);
+        }
+
+        .nav-button:active {
+            transform: translateY(-1px);
         }
 
         .stop-item {
             cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .stop-item:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+            transform: translateX(4px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+            border-left-width: 5px;
+        }
+
+        .stop-item:active {
+            transform: translateX(2px);
         }
 
         #sidebar {
             position: fixed;
-            right: -400px;
+            right: -450px;
             top: 0;
-            width: 400px;
+            width: 450px;
             height: 100%;
-            background: white;
-            box-shadow: -2px 0 8px rgba(0,0,0,0.2);
-            transition: right 0.3s ease;
+            background: linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
+            box-shadow: -8px 0 40px rgba(0,0,0,0.25);
+            transition: right 0.35s cubic-bezier(0.4, 0, 0.2, 1);
             overflow-y: auto;
+            overflow-x: hidden;
             z-index: 1000;
-            padding: 20px;
-            box-sizing: border-box;
+            padding: 28px;
         }
 
         #sidebar.open {
             right: 0;
         }
 
+        #sidebar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #sidebar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        #sidebar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
         .sidebar-close {
             position: absolute;
-            top: 15px;
-            right: 15px;
+            top: 20px;
+            right: 20px;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 24px;
             cursor: pointer;
-            color: #666;
+            color: #64748b;
+            background: #f1f5f9;
+            border-radius: 8px;
+            transition: all 0.2s ease;
         }
 
         .sidebar-close:hover {
-            color: #000;
+            color: #dc2626;
+            background: #fee2e2;
+            transform: scale(1.1);
+        }
+
+        .sidebar-close:active {
+            transform: scale(0.95);
         }
 
         .sidebar-header {
-            margin-top: 30px;
-            margin-bottom: 20px;
+            margin-top: 20px;
+            margin-bottom: 28px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e2e8f0;
         }
 
         .sidebar-header h2 {
-            margin: 0 0 5px 0;
-            font-size: 20px;
-            color: #333;
+            margin: 0 0 10px 0;
+            font-size: 24px;
+            font-weight: 700;
+            color: #0f172a;
+            letter-spacing: -0.5px;
         }
 
         .sidebar-header p {
-            margin: 5px 0;
-            color: #666;
-            font-size: 14px;
+            margin: 6px 0;
+            color: #475569;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-header p::before {
+            content: '→';
+            color: #0891b2;
+            font-weight: bold;
+            font-size: 18px;
         }
 
         .stops-section {
-            margin-top: 20px;
+            margin-top: 24px;
         }
 
         .stops-section h3 {
-            margin-top: 20px;
-            margin-bottom: 10px;
-            font-size: 16px;
-            color: #333;
+            margin: 24px 0 16px 0;
+            font-size: 17px;
+            font-weight: 700;
+            color: #1e293b;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stops-section h3::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(to bottom, #0891b2, #0e7490);
+            border-radius: 2px;
         }
 
         .stop-item {
-            background: #f5f5f5;
-            padding: 12px;
-            margin-bottom: 10px;
-            border-radius: 4px;
-            border-left: 4px solid #22c55e;
+            background: #ffffff;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-radius: 10px;
+            border-left: 4px solid #94a3b8;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stop-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 4px;
+            height: 100%;
+            background: currentColor;
+            transition: width 0.3s ease;
+        }
+
+        .stop-item:hover::before {
+            width: 8px;
         }
 
         .stop-item.current {
-            background: #e0f7e3;
-            border-left-color: #16a34a;
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            border-left-color: #10b981;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
         }
 
         .stop-item.next {
-            background: #fef3c7;
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
             border-left-color: #f59e0b;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25); }
+            50% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4); }
         }
 
         .stop-item.past {
-            background: #e5e7eb;
-            border-left-color: #9ca3af;
+            background: #f8fafc;
+            border-left-color: #cbd5e1;
+            opacity: 0.75;
         }
 
         .stop-item.upcoming {
-            background: #dbeafe;
-            border-left-color: #2563eb;
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            border-left-color: #3b82f6;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
         }
 
         .agency-panel {
@@ -140,14 +240,19 @@
             top: 20px;
             left: 20px;
             z-index: 1001;
-            background: rgba(255, 255, 255, 0.96);
-            border-radius: 12px;
-            box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-            padding: 14px 16px;
-            width: 220px;
-            backdrop-filter: blur(6px);
-            border: 1px solid rgba(17, 24, 39, 0.08);
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
+            padding: 18px 20px;
+            width: 260px;
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(226, 232, 240, 0.6);
             cursor: move;
+            transition: all 0.3s ease;
+        }
+
+        .agency-panel:hover {
+            box-shadow: 0 12px 40px rgba(0,0,0,0.16), 0 4px 12px rgba(0,0,0,0.1);
         }
 
         .agency-panel.minimized {
@@ -170,18 +275,33 @@
             border: none;
             background: #e2e8f0;
             color: #0f172a;
-            border-radius: 8px;
-            padding: 4px 8px;
+            border-radius: 6px;
+            width: 28px;
+            height: 28px;
             cursor: pointer;
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 16px;
+            font-weight: 700;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .agency-header button:hover {
+            background: #cbd5e1;
+            transform: scale(1.1);
+        }
+
+        .agency-header button:active {
+            transform: scale(0.95);
         }
 
         .agency-panel h4 {
-            margin: 0 0 10px 0;
-            font-size: 14px;
+            margin: 0 0 14px 0;
+            font-size: 15px;
+            font-weight: 700;
             color: #0f172a;
-            letter-spacing: 0.3px;
+            letter-spacing: 0.5px;
             text-transform: uppercase;
         }
 
@@ -189,36 +309,63 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 6px 0;
+            padding: 10px 12px;
             font-size: 14px;
-            color: #111827;
+            font-weight: 500;
+            color: #1e293b;
+            background: #f8fafc;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .agency-toggle:hover {
+            background: #e2e8f0;
         }
 
         .agency-toggle input {
-            transform: scale(1.1);
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #0891b2;
         }
 
         .agency-actions {
             display: flex;
             gap: 8px;
-            margin-top: 8px;
+            margin-top: 12px;
         }
 
         .agency-actions button {
             flex: 1;
             border: none;
-            background: #0f766e;
-            color: #f8fafc;
-            padding: 6px 8px;
+            background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+            color: #ffffff;
+            padding: 10px 12px;
             border-radius: 8px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .agency-actions button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(8, 145, 178, 0.3);
+        }
+
+        .agency-actions button:active {
+            transform: translateY(0);
         }
 
         .agency-actions button.secondary {
             background: #e2e8f0;
-            color: #0f172a;
+            color: #1e293b;
+        }
+
+        .agency-actions button.secondary:hover {
+            background: #cbd5e1;
+            box-shadow: 0 4px 12px rgba(148, 163, 184, 0.2);
         }
 
         .transfer-list {
@@ -239,14 +386,141 @@
         }
 
         .stop-name {
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 4px;
+            font-weight: 600;
+            font-size: 15px;
+            color: #1e293b;
+            margin-bottom: 8px;
+            line-height: 1.4;
         }
 
         .stop-time {
-            font-size: 12px;
-            color: #666;
+            font-size: 13px;
+            color: #64748b;
+            line-height: 1.6;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .status-badge.on-time {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-badge.late {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status-badge.early {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        @media (max-width: 768px) {
+            #sidebar {
+                width: 100%;
+                right: -100%;
+            }
+
+            .agency-panel {
+                width: auto;
+                max-width: calc(100vw - 40px);
+            }
+        }
+
+        /* Loading Indicator */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .loading-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #0891b2;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            position: absolute;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 90px;
+        }
+
+        /* Toast Notifications */
+        .toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: rgba(15, 23, 42, 0.95);
+            color: white;
+            padding: 14px 24px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 10000;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .toast.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .toast.error {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        /* Scroll highlight animation */
+        @keyframes highlight-flash {
+            0%, 100% { box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25); }
+            50% { box-shadow: 0 6px 20px rgba(8, 145, 178, 0.6); }
+        }
+
+        .stop-item.scroll-highlight {
+            animation: highlight-flash 1.5s ease-in-out;
         }
     </style>
 
@@ -264,6 +538,15 @@
 </head>
 
 <body>
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading vehicles...</div>
+</div>
+
+<!-- Toast Notification -->
+<div class="toast" id="toast"></div>
+
 <div class="agency-panel" id="agency-panel">
     <div class="agency-header">
         <h4>Agencies</h4>
@@ -298,6 +581,10 @@
     <span class="sidebar-close" onclick="closeSidebar()">&times;</span>
     <div class="sidebar-header">
         <h2 id="route-name">Route Name</h2>
+        <div style="display: flex; gap: 16px; align-items: center; margin: 6px 0;">
+            <p id="route-number" style="color: #666; font-size: 14px; margin: 0; font-weight: 500;">Route #</p>
+            <p id="route-branch" style="color: #666; font-size: 14px; margin: 0; font-weight: 500; display: none;">Branch</p>
+        </div>
         <p id="destination">Destination</p>
     </div>
     <div class="stops-section">
@@ -307,6 +594,25 @@
 </div>
 
 <script>
+    // UI Helper Functions
+    function showToast(message, type = 'info') {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = `toast ${type}`;
+        setTimeout(() => toast.classList.add('show'), 10);
+        setTimeout(() => {
+            toast.classList.remove('show');
+        }, 3000);
+    }
+
+    function showLoading() {
+        document.getElementById('loading-overlay').classList.add('active');
+    }
+
+    function hideLoading() {
+        document.getElementById('loading-overlay').classList.remove('active');
+    }
+
     const map = L.map("map").setView([43.65, -79.38], 10);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -426,6 +732,7 @@
             filterTtc.addEventListener("change", () => {
                 agencyFilters.TTC = filterTtc.checked;
                 renderVehicles(vehiclesCache);
+                showToast(`TTC ${filterTtc.checked ? 'shown' : 'hidden'}`, 'info');
             });
         }
 
@@ -433,6 +740,7 @@
             filterGo.addEventListener("change", () => {
                 agencyFilters.GO = filterGo.checked;
                 renderVehicles(vehiclesCache);
+                showToast(`GO Transit ${filterGo.checked ? 'shown' : 'hidden'}`, 'info');
             });
         }
 
@@ -440,6 +748,7 @@
             filterUp.addEventListener("change", () => {
                 agencyFilters.UP = filterUp.checked;
                 renderVehicles(vehiclesCache);
+                showToast(`UP Express ${filterUp.checked ? 'shown' : 'hidden'}`, 'info');
             });
         }
 
@@ -450,6 +759,7 @@
                 if (filterGo) filterGo.checked = true;
                 if (filterUp) filterUp.checked = true;
                 renderVehicles(vehiclesCache);
+                showToast('All agencies shown', 'success');
             });
         }
 
@@ -460,6 +770,7 @@
                 if (filterGo) filterGo.checked = false;
                 if (filterUp) filterUp.checked = false;
                 renderVehicles(vehiclesCache);
+                showToast('All agencies hidden', 'info');
             });
         }
 
@@ -619,6 +930,20 @@
         }
     }
 
+    async function getUPExpressPredictions(stopCode, tripId) {
+        // Fetch UP Express stop predictions for a specific trip
+        try {
+            const url = tripId ? `/api/up-express-stop/${stopCode}?trip_id=${encodeURIComponent(tripId)}` : `/api/up-express-stop/${stopCode}`;
+            const res = await fetch(url);
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data;
+        } catch (error) {
+            console.error("Error fetching UP Express predictions:", error);
+            return null;
+        }
+    }
+
     async function openSidebar(tripId, vehicleLat, vehicleLon, routeId, agency) {
         try {
             // Build URL with route_id query param if available
@@ -645,7 +970,26 @@
             // Set header info
             if (data.info) {
                 document.getElementById("route-name").textContent = data.info.route_long_name || data.info.route_id;
-                document.getElementById("destination").textContent = data.info.destination || "Unknown";
+                
+                // Build route number with branch
+                let routeNumber = data.info.route_short_name || data.info.route_id || "Unknown";
+                
+                // Add branch if available
+                if (data.info.route_branch) {
+                    routeNumber += data.info.route_branch;
+                }
+                
+                // Get destination
+                let destination = data.info.destination || "Unknown";
+                
+                // Display as "12C - {destination}"
+                document.getElementById("route-number").textContent = `${routeNumber} - ${destination}`;
+                
+                // Hide the separate destination element since it's now combined
+                document.getElementById("destination").style.display = "none";
+                
+                // Hide branch element since it's now part of route number
+                document.getElementById("route-branch").style.display = "none";
             }
 
             // Build stops list
@@ -701,53 +1045,59 @@
                         <div class="stop-time">Scheduled: ${scheduledTime}</div>
                     `;
                     
-                    // For GO Transit terminals, apply last known delay instead of fetching prediction
-                    if (agency === "GO" && isTerminal && lastKnownDelay !== null) {
+                    // For GO/UP Transit terminals, apply last known delay instead of fetching prediction
+                    if ((agency === "GO" || agency === "UP") && isTerminal && lastKnownDelay !== null) {
                         const timeElement = stopDiv.querySelector('.stop-time');
                         if (timeElement) {
                             const delayMins = Math.round(lastKnownDelay / 60);
                             let timeColor = "#666";
                             let status = "";
+                            let prefix = "";
                             
                             if (Math.abs(lastKnownDelay) <= 60) {
                                 timeColor = "#16a34a";
                                 status = " (On Time)";
                             } else if (lastKnownDelay < 0) {
                                 timeColor = "#2563eb";
-                                status = ` (${Math.abs(delayMins)} min early)`;
+                                status = ` (~${Math.abs(delayMins)} min early)`;
+                                prefix = "Estimated: ";
                             } else {
                                 timeColor = "#dc2626";
-                                status = ` (${delayMins} min late)`;
+                                status = ` (~${delayMins} min late)`;
+                                prefix = "Estimated: ";
                             }
                             
                             timeElement.innerHTML = `
-                                <span style="color: ${timeColor}; font-weight: 600;">Scheduled: ${scheduledTime}${status}</span>
+                                <span style="color: ${timeColor}; font-weight: 600;">${prefix}${scheduledTime}${status}</span>
                             `;
                         }
                     }
-                    // For GO Transit non-terminal stops, fetch predictions asynchronously for upcoming stops only
-                    else if (agency === "GO" && !isTerminal && stopSeconds >= currentSeconds) {
+                    // For GO/UP Transit non-terminal stops, fetch predictions asynchronously for upcoming stops only
+                    else if ((agency === "GO" || agency === "UP") && !isTerminal && stopSeconds >= currentSeconds) {
                         if (!stop.stop_code) {
                             console.warn(`⚠️ Stop ${stop.stop_name} (${stop.stop_id}) has no stop_code - cannot fetch predictions`);
                         } else {
-                            console.log(`Fetching predictions for GO stop ${stop.stop_code} (${stop.stop_name}, stop_id: ${stop.stop_id})`);
+                            console.log(`Fetching predictions for ${agency} stop ${stop.stop_code} (${stop.stop_name}, stop_id: ${stop.stop_id})`);
                             console.log(`Current trip_id: ${window.currentTripId}`);
                         
-                            getGOTransitPredictions(stop.stop_code, window.currentTripId).then(predictions => {
+                            const getPredictions = agency === "UP" ? getUPExpressPredictions : getGOTransitPredictions;
+                            getPredictions(stop.stop_code, window.currentTripId).then(predictions => {
                             console.log(`Received predictions for stop ${stop.stop_code}:`, predictions);
                             
                             if (predictions && predictions.predictions && predictions.predictions.length > 0) {
                                 console.log(`Stop ${stop.stop_code} has ${predictions.predictions.length} predictions for trip ${window.currentTripId}`);
                                 
-                                // API should already filter by trip, so use the first (and should be only) prediction
+                                // API may return exact trip match or next service on same route
                                 const routePrediction = predictions.predictions[0];
+                                const isRouteMatch = predictions.match_type === 'route';
                                 
                                 if (!routePrediction) {
                                     console.warn(`⚠️ No predictions found for stop ${stop.stop_code} on trip ${window.currentTripId}`);
                                 }
                                 
                                 if (routePrediction && routePrediction.predicted_time) {
-                                    console.log(`✓ Processing prediction for trip ${routePrediction.trip_number}:`, routePrediction);
+                                    const matchInfo = isRouteMatch ? ` (next service on route ${routePrediction.route_number})` : ``;
+                                    console.log(`✓ Processing prediction for trip ${routePrediction.trip_number}${matchInfo}:`, routePrediction);
                                     
                                     // Parse time - handle datetime formats: "2026-02-11 19:50:25" or "2026-02-11T19:50:25" or "HH:MM:SS"
                                     let predTimeStr = routePrediction.predicted_time;
@@ -807,10 +1157,15 @@
                                     // Update the DOM element
                                     const timeElement = stopDiv.querySelector('.stop-time');
                                     if (timeElement) {
-                                        timeElement.innerHTML = `
-                                            <span style="color: ${timeColor}; font-weight: 600;">${predTime}${status}</span><br>
-                                            <span style="color: #999; font-size: 11px;">Scheduled: ${scheduledTime}</span>
-                                        `;
+                                        let displayHTML = `<span style="color: ${timeColor}; font-weight: 600;">${predTime}${status}</span><br>`;
+                                        displayHTML += `<span style="color: #999; font-size: 11px;">Scheduled: ${scheduledTime}</span>`;
+                                        
+                                        // Show if this is next service on route (not exact trip match)
+                                        if (isRouteMatch) {
+                                            displayHTML += `<br><span style="color: #f59e0b; font-size: 10px; font-style: italic;">Next service on this route</span>`;
+                                        }
+                                        
+                                        timeElement.innerHTML = displayHTML;
                                         console.log(`✓ Updated display for stop ${stop.stop_name} - Color: ${timeColor}, Status: ${status}`);
                                     } else {
                                         console.error(`Could not find .stop-time element for stop ${stop.stop_name}`);
@@ -827,17 +1182,19 @@
                                                 const terminalScheduledTime = formatTime(terminalStop.arrival_time);
                                                 const delayMins = Math.round(timeDiff / 60);
                                                 let terminalStatus = "";
+                                                let statusPrefix = "Estimated: ";
                                                 
                                                 if (Math.abs(timeDiff) <= 60) {
                                                     terminalStatus = " (On Time)";
+                                                    statusPrefix = "";
                                                 } else if (timeDiff < 0) {
-                                                    terminalStatus = ` (${Math.abs(delayMins)} min early)`;
+                                                    terminalStatus = ` (~${Math.abs(delayMins)} min early)`;
                                                 } else {
-                                                    terminalStatus = ` (${delayMins} min late)`;
+                                                    terminalStatus = ` (~${delayMins} min late)`;
                                                 }
                                                 
                                                 terminalTimeElement.innerHTML = `
-                                                    <span style="color: ${timeColor}; font-weight: 600;">Scheduled: ${terminalScheduledTime}${terminalStatus}</span>
+                                                    <span style="color: ${timeColor}; font-weight: 600;">${statusPrefix}${terminalScheduledTime}${terminalStatus}</span>
                                                 `;
                                                 console.log(`✓ Updated terminal ${terminalStop.stop_name} with delay from ${stop.stop_name}`);
                                             }
@@ -845,14 +1202,43 @@
                                     }
                                 }
                             } else {
-                                console.log(`No predictions available for stop ${stop.stop_code} (likely no service scheduled at this time)`);
-                                // Show a subtle note that real-time data isn't available
+                                // No predictions for this specific trip at this stop
+                                const message = predictions.message || 'No real-time data available';
+                                console.log(`No predictions for stop ${stop.stop_code}: ${message}`);
+                                
                                 const timeElement = stopDiv.querySelector('.stop-time');
                                 if (timeElement) {
-                                    timeElement.innerHTML = `
-                                        Scheduled: ${scheduledTime}<br>
-                                        <span style="color: #999; font-size: 10px; font-style: italic;">No real-time data available</span>
-                                    `;
+                                    let displayHTML = `Scheduled: ${scheduledTime}`;
+                                    
+                                    // If we have a last known delay, apply it to show estimated time
+                                    if (lastKnownDelay !== null && Math.abs(lastKnownDelay) > 60) {
+                                        const delayMins = Math.round(lastKnownDelay / 60);
+                                        let delayText = '';
+                                        let delayColor = '#666';
+                                        
+                                        if (delayMins > 0) {
+                                            delayText = `~${delayMins} min delay expected`;
+                                            delayColor = '#dc2626';
+                                        } else if (delayMins < 0) {
+                                            delayText = `~${Math.abs(delayMins)} min early expected`;
+                                            delayColor = '#2563eb';
+                                        }
+                                        
+                                        if (delayText) {
+                                            displayHTML += `<br><span style="color: ${delayColor}; font-size: 11px; font-style: italic;">${delayText}</span>`;
+                                        }
+                                    } else {
+                                        // Show why no real-time data
+                                        let reason = 'Not yet tracked';
+                                        if (message.includes('tracking window')) {
+                                            reason = 'Not yet tracked';
+                                        } else if (message.includes('No service')) {
+                                            reason = 'No upcoming service';
+                                        }
+                                        displayHTML += `<br><span style="color: #999; font-size: 10px; font-style: italic;">${reason}</span>`;
+                                    }
+                                    
+                                    timeElement.innerHTML = displayHTML;
                                 }
                             }
                         }).catch(err => {
@@ -917,6 +1303,43 @@
 
             // Open sidebar
             document.getElementById("sidebar").classList.add("open");
+            
+            // Scroll to current or next stop
+            setTimeout(() => {
+                const sidebar = document.getElementById("sidebar");
+                const currentStop = stopsList.querySelector('.stop-item.current') || 
+                                   stopsList.querySelector('.stop-item.next');
+                
+                if (currentStop) {
+                    // Calculate position to center the stop in view
+                    const sidebarRect = sidebar.getBoundingClientRect();
+                    const stopRect = currentStop.getBoundingClientRect();
+                    const scrollTop = currentStop.offsetTop - (sidebar.clientHeight / 2) + (currentStop.clientHeight / 2);
+                    
+                    sidebar.scrollTo({
+                        top: Math.max(0, scrollTop),
+                        behavior: 'smooth'
+                    });
+                    
+                    // Add highlight animation
+                    currentStop.classList.add('scroll-highlight');
+                    setTimeout(() => currentStop.classList.remove('scroll-highlight'), 1500);
+                    
+                    console.log(`✓ Scrolled to ${currentStop.classList.contains('current') ? 'current' : 'next'} stop`);
+                } else {
+                    // If no current/next stop, scroll to first upcoming stop
+                    const upcomingStop = stopsList.querySelector('.stop-item.upcoming');
+                    if (upcomingStop) {
+                        sidebar.scrollTo({
+                            top: upcomingStop.offsetTop - 20,
+                            behavior: 'smooth'
+                        });
+                        upcomingStop.classList.add('scroll-highlight');
+                        setTimeout(() => upcomingStop.classList.remove('scroll-highlight'), 1500);
+                        console.log('✓ Scrolled to first upcoming stop');
+                    }
+                }
+            }, 350); // Small delay to ensure sidebar animation completes
         } catch (error) {
             console.error("Error loading trip details:", error);
         }
@@ -933,6 +1356,7 @@
             const res = await fetch("/vehicles");
             if (!res.ok) {
                 console.error(`Failed to fetch vehicles: ${res.status} ${res.statusText}`);
+                showToast(`Failed to load vehicles: ${res.statusText}`, 'error');
                 return;
             }
             const vehicles = await res.json();
@@ -940,6 +1364,7 @@
             
             if (!vehicles || vehicles.length === 0) {
                 console.warn("[Vehicles] No vehicles returned from API");
+                showToast('No active vehicles found', 'info');
             }
             
             vehiclesCache = vehicles;  // Store in cache
@@ -962,9 +1387,15 @@
                     console.log(`[Vehicles] Creating marker for ${v.agency} route ${v.route} (${vehicleKey})`);
                     const marker = L.marker([v.lat, v.lon], { icon: icon }).addTo(map);
                     
+                    // Build route number with branch
+                    let routeDisplay = v.route_short_name || v.route || "Unknown";
+                    if (v.route_branch) {
+                        routeDisplay += v.route_branch;
+                    }
+                    
                     let popupContent = `
-                        <b>${v.route_long_name || v.route}</b><br>
-                        ${v.destination || 'Unknown Destination'}<br>
+                        <b>${routeDisplay} - ${v.destination || 'Unknown Destination'}</b><br>
+                        <span style="color: #666; font-size: 12px;">${v.route_long_name || v.route}</span><br>
                         <a href="#" onclick="selectVehicle('${vehicleKey}', '${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
                     `;
                     
@@ -1016,7 +1447,16 @@
         }
     }
 
-    updateVehicles();
+    // Initial load with loading indicator
+    (async function initialize() {
+        showLoading();
+        await updateVehicles();
+        hideLoading();
+        if (vehiclesCache.length > 0) {
+            showToast(`Loaded ${vehiclesCache.length} vehicles`, 'success');
+        }
+    })();
+    
     setInterval(updateVehicles, 5000);
     initAgencyFilters();
 </script>

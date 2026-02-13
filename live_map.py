@@ -3,6 +3,7 @@ import requests
 import zipfile
 import pandas as pd
 import os
+import re
 import xml.etree.ElementTree as ET
 import logging
 from datetime import datetime
@@ -149,7 +150,12 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
 
     # First, try to find by trip_id
     if trip_id:
-        agencies = [preferred_agency] if preferred_agency in GTFS_DATA else list(GTFS_DATA.keys())
+        # If preferred_agency is specified, ONLY search that agency
+        # Otherwise, search all agencies
+        if preferred_agency:
+            agencies = [preferred_agency] if preferred_agency in GTFS_DATA else []
+        else:
+            agencies = list(GTFS_DATA.keys())
         for agency in agencies:
             data = GTFS_DATA[agency]
             trips = data["trips"]
@@ -171,10 +177,47 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
 
                 # Get destination from trip_headsign, with fallback to route name
                 destination = "Unknown"
+                route_branch = None
+                
                 if 'trip_headsign' in trip_row.columns:
                     val = trip_row['trip_headsign'].values[0]
                     if pd.notna(val) and val != "":
-                        destination = str(val).strip()
+                        headsign = str(val).strip()
+                        
+                        # Try to extract branch from headsign with various patterns:
+                        # Pattern 1: "96B - DC Oshawa GO" -> branch B
+                        # Pattern 2: "East - 54A Lawrence East..." -> branch A
+                        # Pattern 3: "East - 54 Lawrence East..." -> no branch
+                        # Pattern 4: "41 - Pickering GO" -> no branch
+                        if " - " in headsign:
+                            parts = headsign.split(" - ")
+                            first_part = parts[0].strip()
+                            
+                            # Try extracting from first part (e.g., "96B")
+                            branch_match = re.search(r'(\d+)([A-Za-z]{1,2})$', first_part)
+                            if branch_match:
+                                # Has branch like "96B"
+                                route_branch = branch_match.group(2)
+                                destination = " - ".join(parts[1:]).strip()
+                            elif re.match(r'^\d+$', first_part):
+                                # Just a number like "41", no branch
+                                destination = " - ".join(parts[1:]).strip()
+                            else:
+                                # First part doesn't match, try second part (e.g., "East - 54A Lawrence...")
+                                if len(parts) > 1:
+                                    second_part = parts[1].strip()
+                                    # Look for route number + optional branch at start of second part
+                                    branch_match2 = re.match(r'^(\d+)([A-Za-z]{1,2})?\s+(.+)', second_part)
+                                    if branch_match2:
+                                        route_branch = branch_match2.group(2)  # May be None
+                                        # Extract destination after the route number+branch
+                                        destination = branch_match2.group(3).strip()
+                                    else:
+                                        destination = headsign
+                                else:
+                                    destination = headsign
+                        else:
+                            destination = headsign
 
                 # If still unknown, try to get from last stop
                 if destination == "Unknown":
@@ -195,6 +238,12 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                 # Check if it's a streetcar (route 500-599)
                 vehicle_subtype = "streetcar" if is_streetcar(route_short) else "bus"
 
+                # If no branch extracted from headsign, try route_desc
+                if not route_branch and 'route_desc' in route_row.columns:
+                    branch_val = route_row['route_desc'].values[0]
+                    if pd.notna(branch_val) and branch_val != "":
+                        route_branch = to_python_type(branch_val)
+
                 return {
                     "route_id": to_python_type(route_id),
                     "route_short_name": to_python_type(route_short),
@@ -202,12 +251,18 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                     "destination": destination,
                     "agency": agency,
                     "vehicle_type": vehicle_type,
-                    "vehicle_subtype": vehicle_subtype
+                    "vehicle_subtype": vehicle_subtype,
+                    "route_branch": route_branch
                 }
 
     # Fallback: try to find by route_id alone
     if route_id:
-        agencies = [preferred_agency] if preferred_agency in GTFS_DATA else list(GTFS_DATA.keys())
+        # If preferred_agency is specified, ONLY search that agency
+        # Otherwise, search all agencies
+        if preferred_agency:
+            agencies = [preferred_agency] if preferred_agency in GTFS_DATA else []
+        else:
+            agencies = list(GTFS_DATA.keys())
         for agency in agencies:
             data = GTFS_DATA[agency]
             routes = data["routes"]
@@ -224,6 +279,13 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                 # Check if it's a streetcar (route 500-599)
                 vehicle_subtype = "streetcar" if is_streetcar(route_short) else "bus"
 
+                # Get route description/branch if available
+                route_branch = None
+                if 'route_desc' in route_row.columns:
+                    branch_val = route_row['route_desc'].values[0]
+                    if pd.notna(branch_val) and branch_val != "":
+                        route_branch = to_python_type(branch_val)
+
                 return {
                     "route_id": to_python_type(route_id),
                     "route_short_name": to_python_type(route_short),
@@ -231,7 +293,8 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
                     "destination": "See stops below",
                     "agency": agency,
                     "vehicle_type": vehicle_type,
-                    "vehicle_subtype": vehicle_subtype
+                    "vehicle_subtype": vehicle_subtype,
+                    "route_branch": route_branch
                 }
 
     return None
@@ -285,20 +348,59 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
                         "lat": float(row['stop_lat']),
                         "lon": float(row['stop_lon'])
                     }
-                    # Add stop_code for GO Transit - use stop_id (which lacks leading 1)
-                    # GO Transit API expects stop codes without the leading 1
-                    stop_data['stop_code'] = to_python_type(row['stop_id'])
+                    # Determine stop_code for GO Transit API
+                    # Bus stops: GTFS has stop_code like 108049, API expects 08049 (without leading 1)
+                    # Train stations: GTFS has no stop_code, use stop_id directly (e.g., "UN", "WH")
+                    if 'stop_code' in row and pd.notna(row['stop_code']):
+                        # Use stop_code from GTFS, remove leading "10" if present
+                        code_str = str(int(row['stop_code']))
+                        if code_str.startswith('10'):
+                            stop_data['stop_code'] = code_str[1:]  # Remove leading '1'
+                        else:
+                            stop_data['stop_code'] = code_str
+                    else:
+                        # No stop_code in GTFS, use stop_id (for train stations like "UN", "WH")
+                        stop_data['stop_code'] = to_python_type(row['stop_id'])
                     result.append(stop_data)
 
                 return result
 
-        # Fallback: if no trip_id or trip not found, get stops for the route
+        # Fallback: if no trip_id or trip not found, get stops for the route with branch matching
         if route_id:
             route_trips = trips[trips['route_id'].astype(str) == str(route_id)]
             if not route_trips.empty:
-                # Get first trip for this route to show stops
-                first_trip_id = route_trips.iloc[0]['trip_id']
-                trip_stops = stop_times[stop_times['trip_id'] == first_trip_id].sort_values('stop_sequence')
+                # Try to get the trip_info to find the branch
+                trip_info = get_trip_info(trip_id, route_id, agency)
+                selected_trip_id = None
+                
+                # If we have branch information, try to find a trip with matching branch
+                if trip_info and trip_info.get('route_branch'):
+                    branch = trip_info['route_branch']
+                    # Look for trips with this branch in their headsign
+                    if 'trip_headsign' in route_trips.columns:
+                        # Match trips that have the branch letter in their headsign
+                        matching_trips = route_trips[
+                            route_trips['trip_headsign'].str.contains(f'{route_id}{branch}', na=False, case=False, regex=False)
+                        ]
+                        if not matching_trips.empty:
+                            selected_trip_id = matching_trips.iloc[0]['trip_id']
+                
+                # If no branch match, try to match by destination/headsign
+                if not selected_trip_id and trip_info and trip_info.get('destination'):
+                    destination = trip_info['destination']
+                    if 'trip_headsign' in route_trips.columns:
+                        # Look for trips with similar destination
+                        matching_trips = route_trips[
+                            route_trips['trip_headsign'].str.contains(destination, na=False, case=False, regex=False)
+                        ]
+                        if not matching_trips.empty:
+                            selected_trip_id = matching_trips.iloc[0]['trip_id']
+                
+                # Last resort: use first trip for this route
+                if not selected_trip_id:
+                    selected_trip_id = route_trips.iloc[0]['trip_id']
+                
+                trip_stops = stop_times[stop_times['trip_id'] == selected_trip_id].sort_values('stop_sequence')
 
                 if not trip_stops.empty:
                     # Merge with stop information - include stop_code if available
@@ -318,9 +420,19 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
                             "lat": float(row['stop_lat']),
                             "lon": float(row['stop_lon'])
                         }
-                        # Add stop_code for GO Transit - use stop_id (which lacks leading 1)
-                        # GO Transit API expects stop codes without the leading 1
-                        stop_data['stop_code'] = row['stop_id']
+                        # Determine stop_code for GO Transit API
+                        # Bus stops: GTFS has stop_code like 108049, API expects 08049 (without leading 1)
+                        # Train stations: GTFS has no stop_code, use stop_id directly (e.g., "UN", "WH")
+                        if 'stop_code' in row and pd.notna(row['stop_code']):
+                            # Use stop_code from GTFS, remove leading "10" if present
+                            code_str = str(int(row['stop_code']))
+                            if code_str.startswith('10'):
+                                stop_data['stop_code'] = code_str[1:]  # Remove leading '1'
+                            else:
+                                stop_data['stop_code'] = code_str
+                        else:
+                            # No stop_code in GTFS, use stop_id (for train stations like "UN", "WH")
+                            stop_data['stop_code'] = row['stop_id']
                         result.append(stop_data)
 
                     return result
@@ -360,13 +472,42 @@ def get_trip_shape(trip_id, route_id=None, preferred_agency=None):
                             })
                         return result
 
-        # Fallback: if no trip found, try route_id
+        # Fallback: if no trip found, try route_id with branch matching
         if route_id:
             route_trips = trips[trips['route_id'].astype(str) == str(route_id)]
             if not route_trips.empty:
-                # Get first trip for this route
-                first_trip_id = route_trips.iloc[0]['trip_id']
-                trip_row = trips[trips['trip_id'] == first_trip_id]
+                # Try to get the trip_info to find the branch
+                trip_info = get_trip_info(trip_id, route_id, agency)
+                selected_trip_id = None
+                
+                # If we have branch information, try to find a trip with matching branch
+                if trip_info and trip_info.get('route_branch'):
+                    branch = trip_info['route_branch']
+                    # Look for trips with this branch in their headsign
+                    if 'trip_headsign' in route_trips.columns:
+                        # Match trips that have the branch letter in their headsign
+                        matching_trips = route_trips[
+                            route_trips['trip_headsign'].str.contains(f'{route_id}{branch}', na=False, case=False, regex=False)
+                        ]
+                        if not matching_trips.empty:
+                            selected_trip_id = matching_trips.iloc[0]['trip_id']
+                
+                # If no branch match, try to match by destination/headsign
+                if not selected_trip_id and trip_info and trip_info.get('destination'):
+                    destination = trip_info['destination']
+                    if 'trip_headsign' in route_trips.columns:
+                        # Look for trips with similar destination
+                        matching_trips = route_trips[
+                            route_trips['trip_headsign'].str.contains(destination, na=False, case=False, regex=False)
+                        ]
+                        if not matching_trips.empty:
+                            selected_trip_id = matching_trips.iloc[0]['trip_id']
+                
+                # Last resort: use first trip for this route
+                if not selected_trip_id:
+                    selected_trip_id = route_trips.iloc[0]['trip_id']
+                
+                trip_row = trips[trips['trip_id'] == selected_trip_id]
 
                 if shapes is not None and 'shape_id' in trip_row.columns:
                     shape_id = trip_row['shape_id'].values[0]
@@ -714,7 +855,8 @@ def vehicles():
                     "destination": trip_info["destination"],
                     "agency": trip_info["agency"],
                     "vehicle_type": trip_info["vehicle_type"],
-                    "vehicle_subtype": trip_info.get("vehicle_subtype", "bus")
+                    "vehicle_subtype": trip_info.get("vehicle_subtype", "bus"),
+                    "route_branch": trip_info.get("route_branch")
                 })
             else:
                 # Default to bus if no GTFS match
@@ -770,7 +912,8 @@ def vehicles():
                     "destination": trip_info["destination"],
                     "agency": trip_info["agency"],
                     "vehicle_type": trip_info["vehicle_type"],
-                    "vehicle_subtype": trip_info.get("vehicle_subtype", "train")
+                    "vehicle_subtype": trip_info.get("vehicle_subtype", "train"),
+                    "route_branch": trip_info.get("route_branch")
                 })
             else:
                 vehicle_data["agency"] = "UP"
@@ -797,8 +940,24 @@ def vehicles():
                 # TTC API returns data in attributes, not child elements
                 trip_id = vehicle.get("tripTag")
                 route_id = vehicle.get("routeTag")
+                dir_tag = vehicle.get("dirTag")  # Contains branch info like "52_0_52B"
                 lat = float(vehicle.get("lat"))
                 lon = float(vehicle.get("lon"))
+                
+                # Extract branch from dirTag if available (e.g., "52_0_52B" -> "B")
+                ttc_branch = None
+                if dir_tag and route_id:
+                    # dirTag format is usually "routeNum_direction_routeVariant"
+                    # e.g., "52_0_52B" means route 52, direction 0, variant 52B
+                    parts = dir_tag.split("_")
+                    if len(parts) >= 3:
+                        variant = parts[2]
+                        # Check if variant is exactly routeNumber + 1-2 letter branch
+                        # e.g., "52B" = route 52 + branch B (valid)
+                        # but "53FSST" ≠ route 53 + branch (invalid, FSST is not a branch)
+                        branch_match = re.match(f'^{re.escape(str(route_id))}([A-Za-z]{{1,2}})$', variant)
+                        if branch_match:
+                            ttc_branch = branch_match.group(1)
 
                 # Cross-reference with GTFS - pass route_id as fallback
                 trip_info = get_trip_info(trip_id, route_id, "TTC") if (trip_id or route_id) else None
@@ -818,13 +977,17 @@ def vehicles():
                         "destination": trip_info["destination"],
                         "agency": trip_info["agency"],
                         "vehicle_type": trip_info["vehicle_type"],
-                        "vehicle_subtype": trip_info.get("vehicle_subtype", "bus")
+                        "vehicle_subtype": trip_info.get("vehicle_subtype", "bus"),
+                        "route_branch": trip_info.get("route_branch") or ttc_branch  # Use GTFS branch or TTC API branch
                     })
                 else:
                     # Default TTC with streetcar detection based on route number (500-599)
                     vehicle_data["agency"] = "TTC"
                     vehicle_data["vehicle_type"] = "bus"
                     vehicle_data["vehicle_subtype"] = "streetcar" if is_streetcar(route_id) else "bus"
+                    # Use branch from TTC API if available
+                    if ttc_branch:
+                        vehicle_data["route_branch"] = ttc_branch
 
                 output.append(vehicle_data)
                 ttc_count += 1
@@ -849,7 +1012,9 @@ def get_go_transit_predictions(stop_code):
         
         GO_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
         
+        logging.info(f"========================================")
         logging.info(f"Fetching GO Transit predictions for stop_code: {stop_code}")
+        logging.info(f"  Stop code type: {type(stop_code)}, value: '{stop_code}'")
         if requested_trip_id:
             logging.info(f"  Filtering for trip_id: {requested_trip_id}")
         
@@ -878,22 +1043,32 @@ def get_go_transit_predictions(stop_code):
         # Check if NextService exists and has Lines
         next_service = data.get('NextService')
         if not next_service:
-            logging.debug(f"No NextService data for stop {stop_code}")
-            return jsonify({'predictions': [], 'stop_code': stop_code})
+            logging.warning(f"⚠️ No NextService data for stop {stop_code}")
+            logging.warning(f"   API Response: {data}")
+            return jsonify({'predictions': [], 'stop_code': stop_code, 'message': 'No service data available for this stop'})
         
         lines = next_service.get('Lines', [])
         if not isinstance(lines, list):
             lines = [lines] if lines else []
         
+        if not lines:
+            logging.warning(f"⚠️ No Lines data for stop {stop_code}")
+            logging.warning(f"   NextService: {next_service}")
+        
         # Extract trip number from GTFS trip_id (format: YYYYMMDD-route-tripnumber)
         extracted_trip_number = None
+        extracted_route = None
         if requested_trip_id:
             trip_parts = str(requested_trip_id).split('-')
             if len(trip_parts) >= 3:
                 extracted_trip_number = trip_parts[-1]
+                extracted_route = trip_parts[1]  # Get route code (e.g., '40' from '20260424-40-40454')
             else:
                 extracted_trip_number = str(requested_trip_id)
-            logging.debug(f"Extracted trip number '{extracted_trip_number}' from trip_id '{requested_trip_id}'")
+            logging.debug(f"Extracted trip number '{extracted_trip_number}' and route '{extracted_route}' from trip_id '{requested_trip_id}'")
+        
+        exact_match = []
+        route_match = []
         
         for line in lines:
             line_code = str(line.get('LineCode', ''))
@@ -908,17 +1083,10 @@ def get_go_transit_predictions(stop_code):
             if not scheduled_time and not computed_time:
                 continue
             
-            # If trip_id was provided, only include predictions matching that trip
-            if requested_trip_id and trip_number != extracted_trip_number:
-                logging.debug(f"  ✗ Skipping Line {line_code}, Trip {trip_number} (looking for {extracted_trip_number})")
-                continue
-            
             # Use computed time as prediction if available, otherwise use scheduled
             predicted_time = computed_time if computed_time else scheduled_time
             
-            logging.debug(f"  ✓ Line: {line_code}/{line_name}, Trip: {trip_number}, Time: {predicted_time}")
-            
-            predictions.append({
+            prediction_obj = {
                 'route_id': line_code,
                 'route_number': line_code,
                 'line_name': line_name,
@@ -926,21 +1094,222 @@ def get_go_transit_predictions(stop_code):
                 'scheduled_time': scheduled_time,
                 'status': line.get('DepartureStatus', ''),
                 'trip_number': trip_number
-            })
+            }
+            
+            # Check for exact trip match ONLY
+            # Each trip is unique - strict cross reference
+            if requested_trip_id and trip_number == extracted_trip_number:
+                logging.debug(f"  ✓✓ EXACT MATCH - Line {line_code}, Trip {trip_number}, Time: {predicted_time}")
+                exact_match.append(prediction_obj)
+            # No filter - include all (when not searching for specific trip)
+            elif not requested_trip_id:
+                logging.debug(f"  ✓ Line: {line_code}/{line_name}, Trip: {trip_number}, Time: {predicted_time}")
+                predictions.append(prediction_obj)
+        
+        # Only use exact match - strict cross reference
+        if exact_match:
+            predictions = exact_match
+            logging.info(f"✓ Found exact trip match for trip {extracted_trip_number}")
+        elif requested_trip_id:
+            # No exact match - show nothing (strict mode)
+            logging.warning(f"⚠️ No exact predictions for trip {extracted_trip_number} at stop {stop_code}")
         
         logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
+        
+        response_data = {'predictions': predictions, 'stop_code': stop_code}
+        
         if predictions:
             trip_list = ", ".join([f"Trip {p['trip_number']}" for p in predictions])
-            logging.info(f"Returning predictions for stop {stop_code}: {trip_list}")
+            logging.info(f"✓ Returning {len(predictions)} predictions for stop {stop_code}: {trip_list}")
         elif requested_trip_id:
-            logging.warning(f"No predictions found for stop {stop_code} matching trip {requested_trip_id}")
-        return jsonify({'predictions': predictions, 'stop_code': stop_code})
+            # No predictions found - strict mode means no fallback
+            logging.warning(f"⚠️ No predictions for stop {stop_code} matching trip {requested_trip_id}")
+            
+            # Let's check if there are ANY trips at this stop
+            if lines:
+                available_trips = [str(line.get('TripNumber', '')) for line in lines if line.get('TripNumber')]
+                available_routes = [str(line.get('LineCode', '')) for line in lines if line.get('LineCode')]
+                logging.info(f"   Available at this stop: Routes {', '.join(set(available_routes))}, Trips: {', '.join(available_trips[:5])}...")
+                response_data['message'] = 'Trip not currently active at this stop'
+                response_data['available_trips_count'] = len(lines)
+            else:
+                response_data['message'] = 'No service data available'
+        else:
+            logging.warning(f"⚠️ No predictions found for stop {stop_code} (no service scheduled)")
+            response_data['message'] = 'No upcoming service'
+        
+        logging.info(f"========================================")
+        return jsonify(response_data)
         
     except requests.exceptions.HTTPError as e:
         logging.error(f"HTTP error fetching GO Transit stop {stop_code}: {e}")
         return jsonify({'predictions': [], 'error': str(e)}), 200
     except Exception as e:
         logging.error(f"Error fetching GO Transit stop predictions for {stop_code}: {e}")
+        return jsonify({'predictions': [], 'error': str(e)}), 200
+
+
+@app.route("/api/up-express-stop/<stop_code>")
+def get_up_express_predictions(stop_code):
+    """Get UP Express stop predictions for a specific stop, optionally filtered by trip_id"""
+    try:
+        # Get optional trip_id query parameter
+        requested_trip_id = request.args.get('trip_id', None)
+        
+        # UP Express uses the same NextService API as GO Transit (both are Metrolinx)
+        UP_STOP_URL = "https://api.openmetrolinx.com/OpenDataAPI/api/V1/Stop/NextService"
+        
+        logging.info(f"========================================")
+        logging.info(f"Fetching UP Express predictions for stop_code: {stop_code}")
+        logging.info(f"  Stop code type: {type(stop_code)}, value: '{stop_code}'")
+        if requested_trip_id:
+            logging.info(f"  Filtering for trip_id: {requested_trip_id}")
+        
+        # Use API key in params
+        params = {"key": API_KEY} if API_KEY else {}
+        
+        full_url = f"{UP_STOP_URL}/{stop_code}"
+        logging.debug(f"Request URL: {full_url} with params: {params}")
+        
+        r = requests.get(
+            full_url,
+            params=params,
+            headers={'Accept': 'application/json'},
+            timeout=5
+        )
+        
+        logging.debug(f"API Response Status: {r.status_code}")
+        r.raise_for_status()
+        data = r.json()
+        
+        logging.debug(f"UP Express API response for stop {stop_code}: {data}")
+        
+        # Extract predictions from the API response
+        predictions = []
+        
+        # Check if NextService exists and has Lines
+        next_service = data.get('NextService')
+        if not next_service:
+            logging.warning(f"⚠️ No NextService data for stop {stop_code}")
+            logging.warning(f"   API Response: {data}")
+            return jsonify({'predictions': [], 'stop_code': stop_code, 'message': 'No service data available for this stop'})
+        
+        lines = next_service.get('Lines', [])
+        if not isinstance(lines, list):
+            lines = [lines] if lines else []
+        
+        if not lines:
+            logging.warning(f"⚠️ No Lines data for stop {stop_code}")
+            logging.warning(f"   NextService: {next_service}")
+        else:
+            # Log all available lines for debugging
+            logging.info(f"  Found {len(lines)} lines at stop {stop_code}")
+            for line in lines[:5]:  # Log first 5
+                logging.info(f"    - LineCode: {line.get('LineCode')}, Trip: {line.get('TripNumber')}, Line: {line.get('LineName')}")
+        
+        # Extract trip number from GTFS trip_id
+        # UP Express format: YYYYMMDD-tripnumber (2 parts)
+        # GO Transit format: YYYYMMDD-route-tripnumber (3 parts)
+        extracted_trip_number = None
+        extracted_route = None
+        if requested_trip_id:
+            trip_parts = str(requested_trip_id).split('-')
+            if len(trip_parts) >= 3:
+                # GO Transit format: YYYYMMDD-route-tripnumber
+                extracted_trip_number = trip_parts[-1]
+                extracted_route = trip_parts[1]  # Get route code
+            elif len(trip_parts) == 2:
+                # UP Express format: YYYYMMDD-tripnumber
+                extracted_trip_number = trip_parts[1]
+            else:
+                extracted_trip_number = str(requested_trip_id)
+            logging.info(f"  Looking for trip number: '{extracted_trip_number}' (route: '{extracted_route}')")
+        
+        exact_match = []
+        route_match = []
+        
+        for line in lines:
+            line_code = str(line.get('LineCode', ''))
+            line_name = line.get('LineName', '')
+            trip_number = str(line.get('TripNumber', ''))
+            
+            # Get departure times
+            scheduled_time = line.get('ScheduledDepartureTime')
+            computed_time = line.get('ComputedDepartureTime')
+            
+            # Skip if no times available
+            if not scheduled_time and not computed_time:
+                continue
+            
+            # Use computed time as prediction if available, otherwise use scheduled
+            predicted_time = computed_time if computed_time else scheduled_time
+            
+            prediction_obj = {
+                'route_id': line_code,
+                'route_number': line_code,
+                'line_name': line_name,
+                'predicted_time': predicted_time,
+                'scheduled_time': scheduled_time,
+                'status': line.get('DepartureStatus', ''),
+                'trip_number': trip_number
+            }
+            
+            # Check for exact trip match ONLY
+            # Each trip is unique - no fallback matching allowed
+            if requested_trip_id and trip_number == extracted_trip_number:
+                logging.debug(f"  ✓✓ EXACT MATCH - Line {line_code}, Trip {trip_number}, Time: {predicted_time}")
+                exact_match.append(prediction_obj)
+            # No filter - include all (when not searching for specific trip)
+            elif not requested_trip_id:
+                logging.debug(f"  ✓ Line: {line_code}/{line_name}, Trip: {trip_number}, Time: {predicted_time}")
+                predictions.append(prediction_obj)
+        
+        # Only use exact match - strict cross reference
+        response_data = {'predictions': [], 'stop_code': stop_code}
+        
+        if exact_match:
+            predictions = exact_match
+            logging.info(f"✓ Found exact trip match for trip {extracted_trip_number}")
+        elif requested_trip_id:
+            # No exact match - show nothing (strict mode)
+            logging.warning(f"⚠️ No exact predictions for trip {extracted_trip_number} at stop {stop_code}")
+        
+        logging.debug(f"Parsed {len(predictions)} predictions for stop {stop_code}")
+        
+        response_data['predictions'] = predictions
+        
+        if predictions:
+            trip_list = ", ".join([f"Trip {p['trip_number']}" for p in predictions])
+            match_type = response_data.get('match_type', 'exact')
+            if match_type == 'route':
+                logging.info(f"✓ Returning {len(predictions)} predictions for stop {stop_code} (route match): {trip_list}")
+            else:
+                logging.info(f"✓ Returning {len(predictions)} predictions for stop {stop_code}: {trip_list}")
+        elif requested_trip_id:
+            # No predictions found
+            logging.warning(f"⚠️ No predictions for stop {stop_code} matching trip {requested_trip_id}")
+            
+            # Let's check if there are ANY trips at this stop
+            if lines:
+                available_trips = [str(line.get('TripNumber', '')) for line in lines if line.get('TripNumber')]
+                available_routes = [str(line.get('LineCode', '')) for line in lines if line.get('LineCode')]
+                logging.info(f"   Available at this stop: Routes {', '.join(set(available_routes))}, Trips: {', '.join(available_trips[:5])}...")
+                response_data['message'] = 'Trip not in active tracking window'
+                response_data['available_trips_count'] = len(lines)
+            else:
+                response_data['message'] = 'No service data available'
+        else:
+            logging.warning(f"⚠️ No predictions found for stop {stop_code} (no service scheduled)")
+            response_data['message'] = 'No upcoming service'
+        
+        logging.info(f"========================================")
+        return jsonify(response_data)
+        
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTP error fetching UP Express stop {stop_code}: {e}")
+        return jsonify({'predictions': [], 'error': str(e)}), 200
+    except Exception as e:
+        logging.error(f"Error fetching UP Express stop predictions for {stop_code}: {e}")
         return jsonify({'predictions': [], 'error': str(e)}), 200
 
 
