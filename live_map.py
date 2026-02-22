@@ -284,11 +284,21 @@ def get_trip_info(trip_id, route_id=None, preferred_agency=None):
         cache_key = str(trip_id)
         if cache_key in TRIP_INFO_CACHE:
             cached_info = TRIP_INFO_CACHE[cache_key].copy()
-            # If preferred_agency specified, only return if agency matches
+            # If preferred_agency specified, prefer matching agency but still return if no route_id fallback
             if preferred_agency and cached_info["agency"] != preferred_agency:
-                pass  # Continue to fallback
+                # Try to find a match in the preferred agency via route_id fallback below
+                pass
             else:
                 return cached_info
+        # Also try integer trip_id if string didn't match (handles GTFS int vs string mismatch)
+        try:
+            int_key = str(int(trip_id))
+            if int_key != cache_key and int_key in TRIP_INFO_CACHE:
+                cached_info = TRIP_INFO_CACHE[int_key].copy()
+                if not preferred_agency or cached_info["agency"] == preferred_agency:
+                    return cached_info
+        except (ValueError, TypeError):
+            pass
 
     # Fallback: try to find by route_id alone (less common, slower path)
     if route_id:
@@ -361,7 +371,7 @@ def get_trip_stops(trip_id, route_id=None, preferred_agency=None):
 
         # First, try to find stop times for this trip
         if trip_id:
-            trip_stops = stop_times[stop_times['trip_id'] == trip_id].sort_values('stop_sequence')
+            trip_stops = stop_times[stop_times['trip_id'].astype(str) == str(trip_id)].sort_values('stop_sequence')
 
             if not trip_stops.empty:
                 # Merge with stop information - include stop_code if available
@@ -487,23 +497,24 @@ def get_trip_shape(trip_id, route_id=None, preferred_agency=None):
 
         # Try to get shape from trip_id
         if trip_id:
-            trip_row = trips[trips['trip_id'] == trip_id]
+            trip_row = trips[trips['trip_id'].astype(str) == str(trip_id)]
             if not trip_row.empty:
                 # Check if shape_id exists and shapes are available
                 if shapes is not None and 'shape_id' in trip_row.columns:
                     shape_id = trip_row['shape_id'].values[0]
 
-                    # Get shape coordinates
-                    shape_coords = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
+                    if pd.notna(shape_id):
+                        # Get shape coordinates
+                        shape_coords = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
 
-                    if not shape_coords.empty:
-                        result = []
-                        for idx, row in shape_coords.iterrows():
-                            result.append({
-                                "lat": float(row['shape_pt_lat']),
-                                "lon": float(row['shape_pt_lon'])
-                            })
-                        return result
+                        if not shape_coords.empty:
+                            result = []
+                            for idx, row in shape_coords.iterrows():
+                                result.append({
+                                    "lat": float(row['shape_pt_lat']),
+                                    "lon": float(row['shape_pt_lon'])
+                                })
+                            return result
 
         # Fallback: if no trip found, try route_id with branch matching
         if route_id:
@@ -528,7 +539,7 @@ def get_trip_shape(trip_id, route_id=None, preferred_agency=None):
                 # If no branch match, try to match by destination/headsign
                 if not selected_trip_id and trip_info and trip_info.get('destination'):
                     destination = trip_info['destination']
-                    if 'trip_headsign' in route_trips.columns:
+                    if destination not in ('Unknown', 'See stops below') and 'trip_headsign' in route_trips.columns:
                         # Look for trips with similar destination
                         matching_trips = route_trips[
                             route_trips['trip_headsign'].str.contains(destination, na=False, case=False, regex=False)
@@ -540,20 +551,21 @@ def get_trip_shape(trip_id, route_id=None, preferred_agency=None):
                 if not selected_trip_id:
                     selected_trip_id = route_trips.iloc[0]['trip_id']
                 
-                trip_row = trips[trips['trip_id'] == selected_trip_id]
+                trip_row = trips[trips['trip_id'].astype(str) == str(selected_trip_id)]
 
-                if shapes is not None and 'shape_id' in trip_row.columns:
+                if not trip_row.empty and shapes is not None and 'shape_id' in trip_row.columns:
                     shape_id = trip_row['shape_id'].values[0]
-                    shape_coords = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
+                    if pd.notna(shape_id):
+                        shape_coords = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
 
-                    if not shape_coords.empty:
-                        result = []
-                        for idx, row in shape_coords.iterrows():
-                            result.append({
-                                "lat": float(row['shape_pt_lat']),
-                                "lon": float(row['shape_pt_lon'])
-                            })
-                        return result
+                        if not shape_coords.empty:
+                            result = []
+                            for idx, row in shape_coords.iterrows():
+                                result.append({
+                                    "lat": float(row['shape_pt_lat']),
+                                    "lon": float(row['shape_pt_lon'])
+                                })
+                            return result
 
     # Fallback to stops if no shape available
     return get_trip_stops(trip_id, route_id, preferred_agency)
@@ -1112,8 +1124,14 @@ def vehicles():
                     lon = vehicle.position.longitude
                     
                     # Extract trip and route information
-                    trip_id = vehicle.trip.trip_id if vehicle.HasField('trip') and vehicle.trip.HasField('trip_id') else None
-                    route_id = vehicle.trip.route_id if vehicle.HasField('trip') and vehicle.trip.HasField('route_id') else None
+                    # In protobuf3, scalar string fields cannot use HasField() - check non-empty string instead
+                    trip_id = None
+                    route_id = None
+                    if vehicle.HasField('trip'):
+                        raw_trip_id = vehicle.trip.trip_id
+                        raw_route_id = vehicle.trip.route_id
+                        trip_id = raw_trip_id if raw_trip_id else None
+                        route_id = raw_route_id if raw_route_id else None
                     
                     # Cross-reference with GTFS
                     trip_info = get_trip_info(trip_id, route_id, "TTC") if (trip_id or route_id) else None
@@ -1135,13 +1153,16 @@ def vehicles():
                             "vehicle_type": trip_info["vehicle_type"],
                             "vehicle_subtype": trip_info.get("vehicle_subtype", "bus"),
                             "route_branch": trip_info.get("route_branch"),
-                            "shape_id": trip_info.get("shape_id")
+                            "shape_id": trip_info.get("shape_id"),
+                            "in_service": True
                         })
                     else:
-                        # Default TTC with streetcar detection based on route number (500-599)
+                        # No trip/route info - vehicle is not in service
                         vehicle_data["agency"] = "TTC"
                         vehicle_data["vehicle_type"] = "bus"
                         vehicle_data["vehicle_subtype"] = "streetcar" if is_streetcar(route_id) else "bus"
+                        vehicle_data["destination"] = "Not in Service"
+                        vehicle_data["in_service"] = False
 
                     output.append(vehicle_data)
                     ttc_count += 1
@@ -1255,9 +1276,12 @@ def get_ttc_trip_alerts():
                 
             trip_update = entity.trip_update
             
-            # Extract trip information
-            update_trip_id = trip_update.trip.trip_id if trip_update.HasField('trip') and trip_update.trip.HasField('trip_id') else None
-            update_route_id = trip_update.trip.route_id if trip_update.HasField('trip') and trip_update.trip.HasField('route_id') else None
+            # Extract trip information (proto3 scalars don't support HasField - check non-empty)
+            update_trip_id = None
+            update_route_id = None
+            if trip_update.HasField('trip'):
+                update_trip_id = trip_update.trip.trip_id or None
+                update_route_id = trip_update.trip.route_id or None
             
             # Apply filters
             if route_id and update_route_id != route_id:
@@ -1429,6 +1453,115 @@ def clear_logs():
         return jsonify({'success': False, 'message': 'Log file not found'}), 404
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route("/api/debug/unknown-vehicles")
+def debug_unknown_vehicles():
+    """
+    Fetch raw live vehicle data from all agencies and return only vehicles
+    that would end up with 'Unknown' destination, along with their raw API payload.
+    Useful for diagnosing trip_id / route_id mismatches.
+    """
+    results = []
+
+    # --- TTC ---
+    if GTFS_RT_AVAILABLE:
+        try:
+            r = requests.get(TTC_VEHICLE_URL, timeout=8)
+            r.raise_for_status()
+            feed = gtfs_realtime_pb2.FeedMessage()
+            feed.ParseFromString(r.content)
+
+            for entity in feed.entity:
+                if not entity.HasField('vehicle'):
+                    continue
+                vehicle = entity.vehicle
+                if not vehicle.HasField('position'):
+                    continue
+
+                trip_id = None
+                route_id = None
+                if vehicle.HasField('trip'):
+                    raw_trip_id = vehicle.trip.trip_id
+                    raw_route_id = vehicle.trip.route_id
+                    trip_id = raw_trip_id if raw_trip_id else None
+                    route_id = raw_route_id if raw_route_id else None
+
+                trip_info = get_trip_info(trip_id, route_id, "TTC") if (trip_id or route_id) else None
+                destination = trip_info.get("destination") if trip_info else "Unknown"
+
+                if not trip_info or destination in ("Unknown", None, ""):
+                    raw = {
+                        "agency": "TTC",
+                        "entity_id": entity.id,
+                        "trip_id": trip_id,
+                        "route_id": route_id,
+                        "lat": vehicle.position.latitude,
+                        "lon": vehicle.position.longitude,
+                        "resolved_trip_info": trip_info,
+                        "cache_key_present": str(trip_id) in TRIP_INFO_CACHE if trip_id else False,
+                        "route_in_gtfs": route_id in [str(r) for r in GTFS_DATA.get("TTC", {}).get("routes", pd.DataFrame()).get("route_id", pd.Series())] if route_id else False,
+                    }
+                    results.append(raw)
+        except Exception as e:
+            results.append({"agency": "TTC", "error": str(e)})
+
+    # --- GO Transit ---
+    if API_KEY:
+        try:
+            r = requests.get(GO_VEHICLE_URL, params={"key": API_KEY}, timeout=8)
+            r.raise_for_status()
+            data = r.json()
+            for entity in data.get("entity", []):
+                v = entity.get("vehicle")
+                if not v or "position" not in v:
+                    continue
+                trip = v.get("trip", {})
+                trip_id = trip.get("trip_id", "")
+                route_id = trip.get("route_id", "")
+                preferred_agency = infer_agency_for_route(route_id) or "GO"
+                trip_info = get_trip_info(trip_id, route_id, preferred_agency) if (trip_id or route_id) else None
+                destination = trip_info.get("destination") if trip_info else "Unknown"
+                if not trip_info or destination in ("Unknown", None, ""):
+                    results.append({
+                        "agency": "GO",
+                        "raw_entity": entity,
+                        "resolved_trip_info": trip_info,
+                        "cache_key_present": str(trip_id) in TRIP_INFO_CACHE if trip_id else False,
+                    })
+        except Exception as e:
+            results.append({"agency": "GO", "error": str(e)})
+
+    # --- UP Express ---
+    if API_KEY:
+        try:
+            r = requests.get(UP_VEHICLE_URL, params={"key": API_KEY}, timeout=8)
+            r.raise_for_status()
+            data = r.json()
+            for entity in data.get("entity", []):
+                v = entity.get("vehicle")
+                if not v or "position" not in v:
+                    continue
+                trip = v.get("trip", {})
+                trip_id = trip.get("trip_id", "")
+                route_id = trip.get("route_id", "")
+                trip_info = get_trip_info(trip_id, route_id, "UP") if (trip_id or route_id) else None
+                destination = trip_info.get("destination") if trip_info else "Unknown"
+                if not trip_info or destination in ("Unknown", None, ""):
+                    results.append({
+                        "agency": "UP",
+                        "raw_entity": entity,
+                        "resolved_trip_info": trip_info,
+                        "cache_key_present": str(trip_id) in TRIP_INFO_CACHE if trip_id else False,
+                    })
+        except Exception as e:
+            results.append({"agency": "UP", "error": str(e)})
+
+    return jsonify({
+        "total_unknown": len(results),
+        "trip_cache_size": len(TRIP_INFO_CACHE),
+        "vehicles": results
+    })
 
 
 if __name__ == "__main__":

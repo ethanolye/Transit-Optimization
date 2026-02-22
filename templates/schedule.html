@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>Transit Optimization | Schedule Studio</title>
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('transit-theme') || 'dark');</script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
         * {
@@ -541,6 +542,91 @@
             color: #92400e;
             font-weight: 500;
         }
+
+        /* ─── Theme Toggle Button ─── */
+        .theme-toggle-btn {
+            padding: 12px 20px;
+            background: rgba(255,255,255,0.18);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s;
+            backdrop-filter: blur(8px);
+        }
+        .theme-toggle-btn:hover {
+            background: rgba(255,255,255,0.28);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+        }
+
+        /* ─── Dark Mode Overrides ─── */
+        html[data-theme="dark"] .header,
+        html[data-theme="dark"] .filters,
+        html[data-theme="dark"] .info-card,
+        html[data-theme="dark"] .schedule-section {
+            background: rgba(15, 23, 42, 0.85);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        html[data-theme="dark"] .header h1 { color: #e2e8f0; }
+        html[data-theme="dark"] .header .subtitle { color: #94a3b8; }
+        html[data-theme="dark"] .filters h2 { color: #e2e8f0; }
+        html[data-theme="dark"] .filter-group label { color: #cbd5e1; }
+        html[data-theme="dark"] .filter-group select,
+        html[data-theme="dark"] .filter-group input {
+            background: #0f172a;
+            color: #e2e8f0;
+            border-color: #334155;
+        }
+        html[data-theme="dark"] .filter-group select:disabled { background: #0a0f1a; opacity: 0.5; }
+        html[data-theme="dark"] .filter-group select:focus,
+        html[data-theme="dark"] .filter-group input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56,189,248,0.12); }
+        html[data-theme="dark"] .selection-display {
+            background: linear-gradient(135deg, #1e3a5f 0%, #1e293b 100%);
+        }
+        html[data-theme="dark"] .selection-display h3 { color: #e2e8f0; }
+        html[data-theme="dark"] .selection-item { background: #0f172a; }
+        html[data-theme="dark"] .selection-item .label { color: #64748b; }
+        html[data-theme="dark"] .selection-item .value { color: #e2e8f0; }
+        html[data-theme="dark"] .info-card h2 { color: #e2e8f0; border-bottom-color: #3b82f6; }
+        html[data-theme="dark"] .info-item {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        }
+        html[data-theme="dark"] .info-item .label { color: #64748b; }
+        html[data-theme="dark"] .info-item .value { color: #e2e8f0; }
+        html[data-theme="dark"] .time-card {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+        html[data-theme="dark"] .time-card:hover { border-color: #3b82f6; }
+        html[data-theme="dark"] .time-card .departure { color: #94a3b8; }
+        html[data-theme="dark"] .available-list { background: #0f172a; }
+        html[data-theme="dark"] .available-list h4 { color: #e2e8f0; }
+        html[data-theme="dark"] .list-item { background: #1e293b; }
+        html[data-theme="dark"] .list-item .id { color: #93c5fd; }
+        html[data-theme="dark"] .list-item .name { color: #94a3b8; }
+        html[data-theme="dark"] .error {
+            background: rgba(239,68,68,0.1);
+            color: #fca5a5;
+            border-left-color: #ef4444;
+        }
+        html[data-theme="dark"] .platform-note {
+            background: rgba(245,158,11,0.1);
+            border-left-color: #f59e0b;
+        }
+        html[data-theme="dark"] .platform-note .text { color: #fcd34d; }
+        html[data-theme="dark"] .no-schedule h3 { color: #94a3b8; }
+        html[data-theme="dark"] .no-schedule p { color: #64748b; }
+        html[data-theme="dark"] .no-schedule i { color: #475569; }
+        html[data-theme="dark"] .brand-badge { background: rgba(15,118,110,0.2); }
+        html[data-theme="dark"] .loading p { color: #94a3b8; }
     </style>
 </head>
 <body>
@@ -560,6 +646,7 @@
             <div class="nav-buttons">
                 <a href="/"><i class="fas fa-map"></i> Live Fleet Map</a>
                 <button onclick="window.location.reload()"><i class="fas fa-sync"></i> Refresh Schedules</button>
+                <button class="theme-toggle-btn" id="theme-toggle" onclick="toggleTheme()" title="Switch to light mode">☀️ Light Mode</button>
             </div>
         </div>
 
@@ -1027,6 +1114,32 @@
 
         // Initialize
         loadAgencies();
+
+        // ─── Theme Management ───────────────────────────────────────────
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            const btn = document.getElementById('theme-toggle');
+            if (theme === 'light') {
+                // Currently light → offer dark
+                if (btn) { btn.innerHTML = '🌙 Dark Mode'; btn.title = 'Switch to dark mode'; }
+            } else {
+                // Currently dark → offer light
+                if (btn) { btn.innerHTML = '☀️ Light Mode'; btn.title = 'Switch to light mode'; }
+            }
+            localStorage.setItem('transit-theme', theme);
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            applyTheme(current === 'dark' ? 'light' : 'dark');
+        }
+
+        // Apply saved theme on load
+        (function () {
+            const saved = localStorage.getItem('transit-theme') || 'dark';
+            applyTheme(saved);
+        })();
+        // ────────────────────────────────────────────────────────────────
     </script>
 </body>
 </html>

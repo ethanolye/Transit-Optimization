@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>Transit Optimization | Live Vehicles</title>
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('transit-theme') || 'dark');</script>
 
     <style>
         * {
@@ -13,6 +14,8 @@
             height: 100%;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #0d1117;
+            color: #e2e8f0;
         }
 
         .nav-button {
@@ -53,7 +56,7 @@
 
         .stop-item:hover {
             transform: translateX(4px);
-            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.4);
             border-left-width: 5px;
         }
 
@@ -67,13 +70,14 @@
             top: 0;
             width: 450px;
             height: 100%;
-            background: linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
-            box-shadow: -8px 0 40px rgba(0,0,0,0.25);
+            background: linear-gradient(to bottom, #0d1117 0%, #0f1923 100%);
+            box-shadow: -8px 0 40px rgba(0,0,0,0.6);
             transition: right 0.35s cubic-bezier(0.4, 0, 0.2, 1);
             overflow-y: auto;
             overflow-x: hidden;
             z-index: 1000;
             padding: 28px;
+            border-left: 1px solid rgba(255,255,255,0.06);
         }
 
         #sidebar.open {
@@ -85,16 +89,16 @@
         }
 
         #sidebar::-webkit-scrollbar-track {
-            background: #f1f5f9;
+            background: #0d1117;
         }
 
         #sidebar::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
+            background: #2d3748;
             border-radius: 4px;
         }
 
         #sidebar::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
+            background: #4a5568;
         }
 
         .sidebar-close {
@@ -108,15 +112,15 @@
             justify-content: center;
             font-size: 24px;
             cursor: pointer;
-            color: #64748b;
-            background: #f1f5f9;
+            color: #94a3b8;
+            background: rgba(255,255,255,0.06);
             border-radius: 8px;
             transition: all 0.2s ease;
         }
 
         .sidebar-close:hover {
-            color: #dc2626;
-            background: #fee2e2;
+            color: #f87171;
+            background: rgba(239,68,68,0.15);
             transform: scale(1.1);
         }
 
@@ -128,20 +132,20 @@
             margin-top: 20px;
             margin-bottom: 28px;
             padding-bottom: 20px;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
         }
 
         .sidebar-header h2 {
             margin: 0 0 10px 0;
             font-size: 24px;
             font-weight: 700;
-            color: #0f172a;
+            color: #f1f5f9;
             letter-spacing: -0.5px;
         }
 
         .sidebar-header p {
             margin: 6px 0;
-            color: #475569;
+            color: #94a3b8;
             font-size: 15px;
             display: flex;
             align-items: center;
@@ -150,7 +154,7 @@
 
         .sidebar-header p::before {
             content: '→';
-            color: #0891b2;
+            color: #38bdf8;
             font-weight: bold;
             font-size: 18px;
         }
@@ -163,7 +167,7 @@
             margin: 24px 0 16px 0;
             font-size: 17px;
             font-weight: 700;
-            color: #1e293b;
+            color: #cbd5e1;
             text-transform: uppercase;
             letter-spacing: 0.8px;
             display: flex;
@@ -175,17 +179,17 @@
             content: '';
             width: 4px;
             height: 20px;
-            background: linear-gradient(to bottom, #0891b2, #0e7490);
+            background: linear-gradient(to bottom, #38bdf8, #0891b2);
             border-radius: 2px;
         }
 
         .stop-item {
-            background: #ffffff;
+            background: rgba(255,255,255,0.04);
             padding: 16px;
             margin-bottom: 12px;
             border-radius: 10px;
-            border-left: 4px solid #94a3b8;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border-left: 4px solid #334155;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
             position: relative;
             overflow: hidden;
         }
@@ -206,31 +210,31 @@
         }
 
         .stop-item.current {
-            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            background: rgba(16, 185, 129, 0.1);
             border-left-color: #10b981;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
         }
 
         .stop-item.next {
-            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            background: rgba(245, 158, 11, 0.1);
             border-left-color: #f59e0b;
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
             animation: pulse 2s ease-in-out infinite;
         }
 
         @keyframes pulse {
-            0%, 100% { box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25); }
-            50% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4); }
+            0%, 100% { box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2); }
+            50% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35); }
         }
 
         .stop-item.past {
-            background: #f8fafc;
-            border-left-color: #cbd5e1;
-            opacity: 0.75;
+            background: rgba(255,255,255,0.02);
+            border-left-color: #1e293b;
+            opacity: 0.5;
         }
 
         .stop-item.upcoming {
-            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            background: rgba(59, 130, 246, 0.1);
             border-left-color: #3b82f6;
             box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
         }
@@ -240,19 +244,20 @@
             top: 20px;
             left: 20px;
             z-index: 1001;
-            background: rgba(255, 255, 255, 0.98);
+            background: rgba(13, 17, 23, 0.92);
             border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
             padding: 18px 20px;
             width: 260px;
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(226, 232, 240, 0.6);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.08);
             cursor: move;
             transition: all 0.3s ease;
         }
 
         .agency-panel:hover {
-            box-shadow: 0 12px 40px rgba(0,0,0,0.16), 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4);
+            border-color: rgba(255,255,255,0.12);
         }
 
         .agency-panel.minimized {
@@ -273,8 +278,8 @@
 
         .agency-header button {
             border: none;
-            background: #e2e8f0;
-            color: #0f172a;
+            background: rgba(255,255,255,0.08);
+            color: #cbd5e1;
             border-radius: 6px;
             width: 28px;
             height: 28px;
@@ -288,7 +293,7 @@
         }
 
         .agency-header button:hover {
-            background: #cbd5e1;
+            background: rgba(255,255,255,0.14);
             transform: scale(1.1);
         }
 
@@ -300,7 +305,7 @@
             margin: 0 0 14px 0;
             font-size: 15px;
             font-weight: 700;
-            color: #0f172a;
+            color: #e2e8f0;
             letter-spacing: 0.5px;
             text-transform: uppercase;
         }
@@ -312,15 +317,43 @@
             padding: 10px 12px;
             font-size: 14px;
             font-weight: 500;
-            color: #1e293b;
-            background: #f8fafc;
+            color: #cbd5e1;
+            background: rgba(255,255,255,0.05);
             border-radius: 8px;
             margin-bottom: 8px;
             transition: all 0.2s ease;
         }
 
+        .agency-sub-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 12px 6px 28px;
+            font-size: 12px;
+            font-weight: 400;
+            color: #64748b;
+            background: transparent;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            margin-top: -4px;
+            transition: all 0.2s ease;
+            border-left: 2px solid #334155;
+            margin-left: 16px;
+        }
+
+        .agency-sub-toggle:hover {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .agency-sub-toggle input {
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+            accent-color: #64748b;
+        }
+
         .agency-toggle:hover {
-            background: #e2e8f0;
+            background: rgba(255,255,255,0.09);
         }
 
         .agency-toggle input {
@@ -359,27 +392,27 @@
         }
 
         .agency-actions button.secondary {
-            background: #e2e8f0;
-            color: #1e293b;
+            background: rgba(255,255,255,0.08);
+            color: #cbd5e1;
         }
 
         .agency-actions button.secondary:hover {
-            background: #cbd5e1;
-            box-shadow: 0 4px 12px rgba(148, 163, 184, 0.2);
+            background: rgba(255,255,255,0.13);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
         .transfer-list {
             margin-top: 6px;
             font-size: 12px;
-            color: #475569;
+            color: #64748b;
         }
 
         .transfer-pill {
             display: inline-block;
             margin: 4px 6px 0 0;
             padding: 2px 8px;
-            background: #e2e8f0;
-            color: #0f172a;
+            background: rgba(255,255,255,0.1);
+            color: #cbd5e1;
             border-radius: 999px;
             font-weight: 600;
             font-size: 11px;
@@ -388,7 +421,7 @@
         .stop-name {
             font-weight: 600;
             font-size: 15px;
-            color: #1e293b;
+            color: #e2e8f0;
             margin-bottom: 8px;
             line-height: 1.4;
         }
@@ -411,18 +444,18 @@
         }
 
         .status-badge.on-time {
-            background: #d1fae5;
-            color: #065f46;
+            background: rgba(16, 185, 129, 0.18);
+            color: #34d399;
         }
 
         .status-badge.late {
-            background: #fee2e2;
-            color: #991b1b;
+            background: rgba(239, 68, 68, 0.18);
+            color: #f87171;
         }
 
         .status-badge.early {
-            background: #dbeafe;
-            color: #1e40af;
+            background: rgba(59, 130, 246, 0.18);
+            color: #60a5fa;
         }
 
         @media (max-width: 768px) {
@@ -515,13 +548,125 @@
 
         /* Scroll highlight animation */
         @keyframes highlight-flash {
-            0%, 100% { box-shadow: 0 4px 12px rgba(8, 145, 178, 0.25); }
-            50% { box-shadow: 0 6px 20px rgba(8, 145, 178, 0.6); }
+            0%, 100% { box-shadow: 0 4px 12px rgba(56, 189, 248, 0.2); }
+            50% { box-shadow: 0 6px 20px rgba(56, 189, 248, 0.5); }
         }
 
         .stop-item.scroll-highlight {
             animation: highlight-flash 1.5s ease-in-out;
         }
+
+        /* Dark popup overrides */
+        .leaflet-popup-content-wrapper {
+            background: #0d1117;
+            color: #e2e8f0;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            border-radius: 10px;
+        }
+        .leaflet-popup-tip {
+            background: #0d1117;
+        }
+        .leaflet-popup-content {
+            color: #e2e8f0;
+        }
+
+        /* ─── Theme Toggle Button ─── */
+        .theme-toggle-btn {
+            position: fixed;
+            bottom: 24px;
+            right: 200px;
+            z-index: 1001;
+            background: rgba(13, 17, 23, 0.92);
+            border: 1px solid rgba(255,255,255,0.12);
+            color: #e2e8f0;
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+        }
+        .theme-toggle-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+            border-color: rgba(255,255,255,0.22);
+        }
+        .theme-toggle-btn:active { transform: translateY(-1px); }
+
+        /* ─── Light Mode Overrides ─── */
+        html[data-theme="light"],
+        html[data-theme="light"] body {
+            background: #f0f4f8;
+            color: #0f172a;
+        }
+        html[data-theme="light"] .theme-toggle-btn {
+            background: rgba(255,255,255,0.95);
+            border-color: #e2e8f0;
+            color: #0f172a;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+        }
+        html[data-theme="light"] #sidebar {
+            background: linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);
+            box-shadow: -8px 0 40px rgba(0,0,0,0.12);
+            border-left: 1px solid #e2e8f0;
+        }
+        html[data-theme="light"] #sidebar::-webkit-scrollbar-track { background: #f8fafc; }
+        html[data-theme="light"] #sidebar::-webkit-scrollbar-thumb { background: #cbd5e1; }
+        html[data-theme="light"] #sidebar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        html[data-theme="light"] .sidebar-header { border-bottom: 1px solid #e2e8f0; }
+        html[data-theme="light"] .sidebar-header h2 { color: #0f172a; }
+        html[data-theme="light"] .sidebar-header p { color: #475569; }
+        html[data-theme="light"] .sidebar-header p::before { color: #0891b2; }
+        html[data-theme="light"] .sidebar-close { color: #475569; background: rgba(0,0,0,0.06); }
+        html[data-theme="light"] .sidebar-close:hover { color: #dc2626; background: rgba(239,68,68,0.1); }
+        html[data-theme="light"] .stops-section h3 { color: #334155; }
+        html[data-theme="light"] .stops-section h3::before { background: linear-gradient(to bottom, #0891b2, #0e7490); }
+        html[data-theme="light"] .stop-item { background: rgba(0,0,0,0.03); border-left-color: #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+        html[data-theme="light"] .stop-item.current { background: rgba(16,185,129,0.08); border-left-color: #10b981; }
+        html[data-theme="light"] .stop-item.next { background: rgba(245,158,11,0.08); border-left-color: #f59e0b; }
+        html[data-theme="light"] .stop-item.upcoming { background: rgba(59,130,246,0.08); border-left-color: #3b82f6; }
+        html[data-theme="light"] .stop-item.past { background: rgba(0,0,0,0.01); border-left-color: #f1f5f9; opacity: 0.6; }
+        html[data-theme="light"] .stop-name { color: #0f172a; }
+        html[data-theme="light"] .stop-time { color: #475569; }
+        html[data-theme="light"] .transfer-pill { background: rgba(0,0,0,0.07); color: #334155; }
+        html[data-theme="light"] .transfer-list { color: #475569; }
+        html[data-theme="light"] .agency-panel {
+            background: rgba(255,255,255,0.96);
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+        }
+        html[data-theme="light"] .agency-panel h4 { color: #0f172a; }
+        html[data-theme="light"] .agency-toggle { background: rgba(0,0,0,0.04); color: #334155; }
+        html[data-theme="light"] .agency-toggle:hover { background: rgba(0,0,0,0.08); }
+        html[data-theme="light"] .agency-sub-toggle { color: #475569; border-left-color: #e2e8f0; }
+        html[data-theme="light"] .agency-sub-toggle:hover { background: rgba(0,0,0,0.04); }
+        html[data-theme="light"] .agency-header button { background: rgba(0,0,0,0.06); color: #334155; }
+        html[data-theme="light"] .agency-header button:hover { background: rgba(0,0,0,0.11); }
+        html[data-theme="light"] .agency-actions button.secondary {
+            background: rgba(0,0,0,0.07);
+            color: #334155;
+        }
+        html[data-theme="light"] .agency-actions button.secondary:hover { background: rgba(0,0,0,0.12); }
+        html[data-theme="light"] .loading-overlay { background: rgba(240,244,248,0.82); }
+        html[data-theme="light"] .loading-spinner { border-color: rgba(0,0,0,0.12); border-top-color: #0891b2; }
+        html[data-theme="light"] .loading-text { color: #334155; }
+        html[data-theme="light"] .toast { background: rgba(15,23,42,0.92); }
+        html[data-theme="light"] .toast.success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        html[data-theme="light"] .toast.error { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+        html[data-theme="light"] .leaflet-popup-content-wrapper {
+            background: #ffffff;
+            color: #0f172a;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        }
+        html[data-theme="light"] .leaflet-popup-tip { background: #ffffff; }
+        html[data-theme="light"] .leaflet-popup-content { color: #0f172a; }
     </style>
 
     <link
@@ -557,6 +702,10 @@
             <span>TTC</span>
             <input type="checkbox" id="filter-ttc" checked>
         </label>
+        <label class="agency-sub-toggle">
+            <span>Not in Service</span>
+            <input type="checkbox" id="filter-nis">
+        </label>
         <label class="agency-toggle">
             <span>GO Transit</span>
             <input type="checkbox" id="filter-go" checked>
@@ -574,6 +723,7 @@
 <a href="/schedule" class="nav-button">
     <i class="fas fa-clock"></i> Schedule Studio
 </a>
+<button class="theme-toggle-btn" id="theme-toggle" onclick="toggleTheme()" title="Switch to light mode">☀️</button>
 
 <div id="map"></div>
 
@@ -582,8 +732,8 @@
     <div class="sidebar-header">
         <h2 id="route-name">Route Name</h2>
         <div style="display: flex; gap: 16px; align-items: center; margin: 6px 0;">
-            <p id="route-number" style="color: #666; font-size: 14px; margin: 0; font-weight: 500;">Route #</p>
-            <p id="route-branch" style="color: #666; font-size: 14px; margin: 0; font-weight: 500; display: none;">Branch</p>
+            <p id="route-number" style="color: #64748b; font-size: 14px; margin: 0; font-weight: 500;">Route #</p>
+            <p id="route-branch" style="color: #64748b; font-size: 14px; margin: 0; font-weight: 500; display: none;">Branch</p>
         </div>
         <p id="destination">Destination</p>
     </div>
@@ -615,60 +765,96 @@
 
     const map = L.map("map").setView([43.65, -79.38], 10);
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19
+    // Tile layer – URL is swapped when theme changes
+    let currentTileLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
 
-    // Custom icons for vehicles - Green (GO Transit)
-    const busIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.bus-body{fill:%2322c55e;stroke:%23166534;stroke-width:2;}.bus-window{fill:%2387ceeb;stroke:%23166534;stroke-width:1.5;}.bus-door{fill:%23f97316;stroke:%23166534;stroke-width:1.5;}.bus-wheel{fill:%23333;stroke:%23000;stroke-width:1;}</style></defs><rect class="bus-body" x="15" y="25" width="70" height="40" rx="5"/><rect class="bus-window" x="22" y="30" width="15" height="12" rx="2"/><rect class="bus-window" x="42" y="30" width="15" height="12" rx="2"/><rect class="bus-door" x="65" y="30" width="13" height="20" rx="2"/><circle class="bus-wheel" cx="28" cy="68" r="7"/><circle class="bus-wheel" cx="72" cy="68" r="7"/></svg>',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20]
+    // ─── Theme Management ───────────────────────────────────────────
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const btn = document.getElementById('theme-toggle');
+        if (theme === 'light') {
+            // Currently light → button offers to switch to dark
+            if (btn) { btn.textContent = '🌙'; btn.title = 'Switch to dark mode'; }
+            currentTileLayer.setUrl('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png');
+        } else {
+            // Currently dark → button offers to switch to light
+            if (btn) { btn.textContent = '☀️'; btn.title = 'Switch to light mode'; }
+            currentTileLayer.setUrl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        }
+        localStorage.setItem('transit-theme', theme);
+    }
+
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme') || 'dark';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
+    }
+
+    // Apply saved theme on load (tile layer already created, so safe to call now)
+    (function () {
+        const saved = localStorage.getItem('transit-theme') || 'dark';
+        applyTheme(saved);
+    })();
+    // ────────────────────────────────────────────────────────────────
+
+    // ─── Google Maps-style circular vehicle icons ────────────────────────
+    // Each icon: semi-transparent colour halo → white ring → solid colour dot → FA symbol
+    function makeVehicleIcon(color, halo, faClass, size = 44) {
+        const half   = size / 2;
+        const ring   = Math.round(size * 0.135);  // halo → white-ring inset
+        const inner  = Math.round(size * 0.225);  // white-ring → colour-circle inset
+        const icoSize = Math.round(size * 0.30);  // FA icon font-size
+        return L.divIcon({
+            className: '',
+            html: `<div style="width:${size}px;height:${size}px;position:relative;">
+                <div style="position:absolute;inset:0;border-radius:50%;background:${halo};"></div>
+                <div style="position:absolute;inset:${ring}px;border-radius:50%;background:white;box-shadow:0 2px 10px rgba(0,0,0,0.22);"></div>
+                <div style="position:absolute;inset:${inner}px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;">
+                    <i class="${faClass}" style="color:white;font-size:${icoSize}px;line-height:1;"></i>
+                </div>
+            </div>`,
+            iconSize:   [size, size],
+            iconAnchor: [half, half],
+            popupAnchor:[0, -half]
+        });
+    }
+
+    // GO Transit — green
+    const busIcon          = makeVehicleIcon('#22c55e', 'rgba(34,197,94,0.28)',   'fas fa-bus');
+    const trainIcon        = makeVehicleIcon('#22c55e', 'rgba(34,197,94,0.28)',   'fas fa-train');
+    // UP Express — amber
+    const upTrainIcon      = makeVehicleIcon('#f59e0b', 'rgba(245,158,11,0.28)',  'fas fa-train');
+    // TTC — red
+    const ttcBusIcon       = makeVehicleIcon('#dc2626', 'rgba(220,38,38,0.28)',   'fas fa-bus');
+    const ttcStreetcarIcon = makeVehicleIcon('#dc2626', 'rgba(220,38,38,0.28)',   'fas fa-train');
+    // Not in Service — grey, slightly smaller
+    const nisIcon          = makeVehicleIcon('#9ca3af', 'rgba(156,163,175,0.18)', 'fas fa-bus', 36);
+
+    // Stop marker icons (small Google-Maps-dot style)
+    const stopIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:18px;height:18px;position:relative;">
+            <div style="position:absolute;inset:0;border-radius:50%;background:rgba(251,191,36,0.32);"></div>
+            <div style="position:absolute;inset:4px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.2);"></div>
+            <div style="position:absolute;inset:6px;border-radius:50%;background:#fbbf24;"></div>
+        </div>`,
+        iconSize:   [18, 18],
+        iconAnchor: [9, 9],
+        popupAnchor:[0, -9]
     });
 
-    const trainIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.train-body{fill:%2322c55e;stroke:%23166534;stroke-width:2;}.train-window{fill:%2387ceeb;stroke:%23166534;stroke-width:1.5;}.train-wheel{fill:%23333;stroke:%23000;stroke-width:1.5;}</style></defs><path class="train-body" d="M 20 30 L 30 25 L 70 25 L 80 30 L 80 50 L 20 50 Z"/><rect class="train-window" x="28" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="48" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="68" y="28" width="8" height="10" rx="1"/><circle class="train-wheel" cx="30" cy="60" r="8"/><circle class="train-wheel" cx="70" cy="60" r="8"/></svg>',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20]
-    });
-
-    const upTrainIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.train-body{fill:%239a3412;stroke:%237c2d12;stroke-width:2;}.train-window{fill:%23fde68a;stroke:%237c2d12;stroke-width:1.5;}.train-wheel{fill:%23333;stroke:%23000;stroke-width:1.5;}</style></defs><path class="train-body" d="M 20 30 L 30 25 L 70 25 L 80 30 L 80 50 L 20 50 Z"/><rect class="train-window" x="28" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="48" y="28" width="12" height="10" rx="1"/><rect class="train-window" x="68" y="28" width="8" height="10" rx="1"/><circle class="train-wheel" cx="30" cy="60" r="8"/><circle class="train-wheel" cx="70" cy="60" r="8"/></svg>',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20]
-    });
-
-    // TTC Icons - Red
-    const ttcBusIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.ttc-bus-body{fill:%23dc2626;stroke:%23991b1b;stroke-width:2;}.ttc-bus-window{fill:%2387ceeb;stroke:%23991b1b;stroke-width:1.5;}.ttc-bus-door{fill:%23f97316;stroke:%23991b1b;stroke-width:1.5;}.ttc-bus-wheel{fill:%23333;stroke:%23000;stroke-width:1;}</style></defs><rect class="ttc-bus-body" x="15" y="25" width="70" height="40" rx="5"/><rect class="ttc-bus-window" x="22" y="30" width="15" height="12" rx="2"/><rect class="ttc-bus-window" x="42" y="30" width="15" height="12" rx="2"/><rect class="ttc-bus-door" x="65" y="30" width="13" height="20" rx="2"/><circle class="ttc-bus-wheel" cx="28" cy="68" r="7"/><circle class="ttc-bus-wheel" cx="72" cy="68" r="7"/></svg>',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20]
-    });
-
-    const ttcStreetcarIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><style>.ttc-streetcar-body{fill:%23dc2626;stroke:%23991b1b;stroke-width:2;}.ttc-streetcar-window{fill:%2387ceeb;stroke:%23991b1b;stroke-width:1.5;}.ttc-streetcar-wheel{fill:%23333;stroke:%23000;stroke-width:1.5;}</style></defs><path class="ttc-streetcar-body" d="M 15 30 L 20 25 L 80 25 L 85 30 L 85 50 L 15 50 Z"/><rect class="ttc-streetcar-window" x="25" y="28" width="12" height="10" rx="1"/><rect class="ttc-streetcar-window" x="45" y="28" width="12" height="10" rx="1"/><rect class="ttc-streetcar-window" x="65" y="28" width="12" height="10" rx="1"/><circle class="ttc-streetcar-wheel" cx="28" cy="60" r="7"/><circle class="ttc-streetcar-wheel" cx="72" cy="60" r="7"/></svg>',
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-        popupAnchor: [0, -20]
-    });
-
-    // Stop marker icons
-    const stopIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="35" fill="%23fbbf24" stroke="%23d97706" stroke-width="3"/><circle cx="50" cy="50" r="20" fill="%23fff" opacity="0.7"/></svg>',
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
-        popupAnchor: [0, -10]
-    });
-
-    const currentStopIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="%2316a34a" stroke="%23166534" stroke-width="3"/><circle cx="50" cy="50" r="25" fill="%2386efac" opacity="0.8"/></svg>',
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
-        popupAnchor: [0, -12]
+    const currentStopIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:22px;height:22px;position:relative;">
+            <div style="position:absolute;inset:0;border-radius:50%;background:rgba(22,163,74,0.32);"></div>
+            <div style="position:absolute;inset:4px;border-radius:50%;background:white;box-shadow:0 1px 5px rgba(0,0,0,0.22);"></div>
+            <div style="position:absolute;inset:7px;border-radius:50%;background:#16a34a;"></div>
+        </div>`,
+        iconSize:   [22, 22],
+        iconAnchor: [11, 11],
+        popupAnchor:[0, -11]
     });
 
     let markers = [];
@@ -680,14 +866,23 @@
         GO: true,
         UP: true
     };
+    let showNotInService = false;  // Not in Service vehicles hidden by default
     let vehiclesCache = [];  // Cache vehicle data to avoid refetching on UI changes
     let vehicleMarkers = {};  // Map vehicle keys to their markers for faster show/hide
 
-    const stopPinIcon = L.icon({
-        iconUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M32 2C20.4 2 11 11.4 11 23c0 14.4 18.7 36.2 19.5 37.1.8.9 2.2.9 3 0C34.3 59.2 53 37.4 53 23 53 11.4 43.6 2 32 2zm0 30a9 9 0 1 1 0-18 9 9 0 0 1 0 18z" fill="%23ef4444" stroke="%23991b1b" stroke-width="2"/></svg>',
-        iconSize: [26, 26],
-        iconAnchor: [13, 26],
-        popupAnchor: [0, -22]
+    const stopPinIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:28px;height:36px;position:relative;display:flex;flex-direction:column;align-items:center;">
+            <div style="width:28px;height:28px;position:relative;">
+                <div style="position:absolute;inset:0;border-radius:50%;background:rgba(239,68,68,0.28);"></div>
+                <div style="position:absolute;inset:5px;border-radius:50%;background:white;box-shadow:0 2px 8px rgba(0,0,0,0.22);"></div>
+                <div style="position:absolute;inset:8px;border-radius:50%;background:#ef4444;"></div>
+            </div>
+            <div style="width:3px;height:8px;background:#ef4444;border-radius:0 0 2px 2px;margin-top:-1px;"></div>
+        </div>`,
+        iconSize:   [28, 36],
+        iconAnchor: [14, 36],
+        popupAnchor:[0, -36]
     });
 
     function closeSidebar() {
@@ -723,6 +918,7 @@
         const filterTtc = document.getElementById("filter-ttc");
         const filterGo = document.getElementById("filter-go");
         const filterUp = document.getElementById("filter-up");
+        const filterNis = document.getElementById("filter-nis");
         const showAll = document.getElementById("show-all");
         const hideAll = document.getElementById("hide-all");
         const panel = document.getElementById("agency-panel");
@@ -752,12 +948,22 @@
             });
         }
 
+        if (filterNis) {
+            filterNis.addEventListener("change", () => {
+                showNotInService = filterNis.checked;
+                renderVehicles(vehiclesCache);
+                showToast(`Not in Service vehicles ${filterNis.checked ? 'shown' : 'hidden'}`, 'info');
+            });
+        }
+
         if (showAll) {
             showAll.addEventListener("click", () => {
                 agencyFilters = { TTC: true, GO: true, UP: true };
+                showNotInService = true;
                 if (filterTtc) filterTtc.checked = true;
                 if (filterGo) filterGo.checked = true;
                 if (filterUp) filterUp.checked = true;
+                if (filterNis) filterNis.checked = true;
                 renderVehicles(vehiclesCache);
                 showToast('All agencies shown', 'success');
             });
@@ -766,9 +972,11 @@
         if (hideAll) {
             hideAll.addEventListener("click", () => {
                 agencyFilters = { TTC: false, GO: false, UP: false };
+                showNotInService = false;
                 if (filterTtc) filterTtc.checked = false;
                 if (filterGo) filterGo.checked = false;
                 if (filterUp) filterUp.checked = false;
+                if (filterNis) filterNis.checked = false;
                 renderVehicles(vehiclesCache);
                 showToast('All agencies hidden', 'info');
             });
@@ -982,7 +1190,7 @@
                 }
                 
                 // Get destination
-                let destination = data.info.destination || "Unknown";
+                let destination = data.info.destination || "Not in Service";
                 
                 // Display route number separately from destination
                 document.getElementById("route-number").textContent = `Route ${routeNumber}`;
@@ -1375,43 +1583,56 @@
             // Create markers for new vehicles
             vehicles.forEach(v => {
                 const vehicleKey = getVehicleKey(v);
-                if (!vehicleMarkers[vehicleKey]) {
-                    // Select icon based on agency and vehicle type
-                    let icon;
-                    if (v.agency === "TTC") {
-                        // TTC: routes 500-599 are streetcars, rest are buses
-                        icon = isStreetcar(v.route) ? ttcStreetcarIcon : ttcBusIcon;
-                    } else if (v.agency === "UP") {
-                        icon = upTrainIcon;
-                    } else {
-                        icon = v.vehicle_type === "train" ? trainIcon : busIcon;
-                    }
+                const isNIS = v.in_service === false;
 
-                    console.log(`[Vehicles] Creating marker for ${v.agency} route ${v.route} (${vehicleKey})`);
-                    // Don't add to map yet - let renderVehicles decide visibility
-                    const marker = L.marker([v.lat, v.lon], { icon: icon });
-                    
-                    // Build route number with branch
-                    let routeDisplay = v.route_short_name || v.route || "Unknown";
-                    if (v.route_branch) {
-                        routeDisplay += v.route_branch;
-                    }
-                    
-                    let popupContent = `
-                        <b>${routeDisplay} - ${v.destination || 'Unknown Destination'}</b><br>
+                // Select icon based on agency and vehicle type
+                let icon;
+                if (isNIS) {
+                    icon = nisIcon;
+                } else if (v.agency === "TTC") {
+                    icon = isStreetcar(v.route) ? ttcStreetcarIcon : ttcBusIcon;
+                } else if (v.agency === "UP") {
+                    icon = upTrainIcon;
+                } else {
+                    icon = v.vehicle_type === "train" ? trainIcon : busIcon;
+                }
+
+                // Build route number with branch
+                let routeDisplay = v.route_short_name || v.route || "Not in Service";
+                if (v.route_branch) {
+                    routeDisplay += v.route_branch;
+                }
+
+                let popupContent;
+                if (isNIS) {
+                    popupContent = `
+                        <b style="color:#888;">Not in Service</b><br>
+                        <span style="color: #999; font-size: 12px;">No active trip assigned</span>
+                    `;
+                } else {
+                    popupContent = `
+                        <b>${routeDisplay} - ${v.destination || 'Not in Service'}</b><br>
                         <span style="color: #666; font-size: 12px;">${v.route_long_name || v.route}</span><br>
                         <a href="#" onclick="selectVehicle('${vehicleKey}', '${v.trip}', ${v.lat}, ${v.lon}, '${v.route}', '${v.agency}'); return false;" style="color: #3b82f6; text-decoration: none;">View Schedule →</a>
                     `;
-                    
+                }
+
+                if (!vehicleMarkers[vehicleKey]) {
+                    // Create new marker
+                    const marker = L.marker([v.lat, v.lon], { icon: icon });
                     marker.bindPopup(popupContent);
-                    marker.on("click", function() {
-                        selectVehicle(vehicleKey, v.trip, v.lat, v.lon, v.route, v.agency);
-                    });
-                    
+                    if (!isNIS) {
+                        marker.on("click", function() {
+                            selectVehicle(vehicleKey, v.trip, v.lat, v.lon, v.route, v.agency);
+                        });
+                    }
                     vehicleMarkers[vehicleKey] = marker;
                 } else {
-                    // Update position of existing marker
-                    vehicleMarkers[vehicleKey].setLatLng([v.lat, v.lon]);
+                    // Update position and refresh icon/popup in case in_service status changed
+                    const marker = vehicleMarkers[vehicleKey];
+                    marker.setLatLng([v.lat, v.lon]);
+                    marker.setIcon(icon);
+                    marker.bindPopup(popupContent);
                 }
             });
             
@@ -1429,9 +1650,12 @@
             if (!marker) return;
             
             // Determine if this vehicle should be visible
+            const isNIS = v.in_service === false;
+            // NIS vehicles: hidden unless showNotInService is on AND the agency filter is also on
+            const passesNisFilter = !isNIS || showNotInService;
             const passesAgencyFilter = agencyFilters[v.agency] !== false;
             const passesSelectionFilter = !selectedVehicleKey || getVehicleKey(v) === selectedVehicleKey;
-            const shouldShow = passesAgencyFilter && passesSelectionFilter;
+            const shouldShow = passesNisFilter && passesAgencyFilter && passesSelectionFilter;
             
             // Show or hide the marker
             if (shouldShow) {
