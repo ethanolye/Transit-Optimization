@@ -667,6 +667,24 @@
         }
         html[data-theme="light"] .leaflet-popup-tip { background: #ffffff; }
         html[data-theme="light"] .leaflet-popup-content { color: #0f172a; }
+
+        /* ─── Satellite Mode Overrides ─── */
+        /* Satellite keeps the dark UI — only map tiles change.
+           Re-state key components so they overlay the imagery cleanly. */
+        html[data-theme="satellite"] .theme-toggle-btn {
+            background: rgba(13, 17, 23, 0.88);
+            border-color: rgba(255,255,255,0.18);
+            color: #e2e8f0;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+        }
+        html[data-theme="satellite"] .agency-panel {
+            background: rgba(13, 17, 23, 0.92);
+            border: 1px solid rgba(255,255,255,0.10);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+        }
+        html[data-theme="satellite"] .nav-button {
+            box-shadow: 0 4px 14px rgba(8,145,178,0.45);
+        }
     </style>
 
     <link
@@ -772,24 +790,39 @@
     }).addTo(map);
 
     // ─── Theme Management ───────────────────────────────────────────
+    const TILE_URLS = {
+        dark:      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        light:     'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+    };
+    const TILE_ATTRIBUTIONS = {
+        dark:      '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        light:     '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        satellite: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, USGS, AeroGRID, IGN, and the GIS User Community'
+    };
+    // Cycle order: dark → light → satellite → dark
+    const THEME_CYCLE = { dark: 'light', light: 'satellite', satellite: 'dark' };
+    const THEME_NEXT_LABEL = { dark: '☀️', light: '🛰️', satellite: '🌙' };
+    const THEME_NEXT_TITLE = { dark: 'Switch to light mode', light: 'Switch to satellite view', satellite: 'Switch to dark mode' };
+
     function applyTheme(theme) {
+        if (!TILE_URLS[theme]) theme = 'dark';
         document.documentElement.setAttribute('data-theme', theme);
         const btn = document.getElementById('theme-toggle');
-        if (theme === 'light') {
-            // Currently light → button offers to switch to dark
-            if (btn) { btn.textContent = '🌙'; btn.title = 'Switch to dark mode'; }
-            currentTileLayer.setUrl('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png');
-        } else {
-            // Currently dark → button offers to switch to light
-            if (btn) { btn.textContent = '☀️'; btn.title = 'Switch to light mode'; }
-            currentTileLayer.setUrl('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        if (btn) {
+            btn.textContent = THEME_NEXT_LABEL[theme];
+            btn.title = THEME_NEXT_TITLE[theme];
         }
+        currentTileLayer.setUrl(TILE_URLS[theme]);
+        // Swap attribution without recreating the layer
+        currentTileLayer.options.attribution = TILE_ATTRIBUTIONS[theme];
+        if (map.attributionControl) map.attributionControl.addAttribution(TILE_ATTRIBUTIONS[theme]);
         localStorage.setItem('transit-theme', theme);
     }
 
     function toggleTheme() {
         const current = document.documentElement.getAttribute('data-theme') || 'dark';
-        applyTheme(current === 'dark' ? 'light' : 'dark');
+        applyTheme(THEME_CYCLE[current] || 'light');
     }
 
     // Apply saved theme on load (tile layer already created, so safe to call now)
@@ -801,7 +834,7 @@
 
     // ─── Google Maps-style circular vehicle icons ────────────────────────
     // Each icon: semi-transparent colour halo → white ring → solid colour dot → FA symbol
-    function makeVehicleIcon(color, halo, faClass, size = 44) {
+    function makeVehicleIcon(color, halo, faClass, size = 30) {
         const half   = size / 2;
         const ring   = Math.round(size * 0.135);  // halo → white-ring inset
         const inner  = Math.round(size * 0.225);  // white-ring → colour-circle inset
@@ -830,7 +863,7 @@
     const ttcBusIcon       = makeVehicleIcon('#dc2626', 'rgba(220,38,38,0.28)',   'fas fa-bus');
     const ttcStreetcarIcon = makeVehicleIcon('#dc2626', 'rgba(220,38,38,0.28)',   'fas fa-train');
     // Not in Service — grey, slightly smaller
-    const nisIcon          = makeVehicleIcon('#9ca3af', 'rgba(156,163,175,0.18)', 'fas fa-bus', 36);
+    const nisIcon          = makeVehicleIcon('#9ca3af', 'rgba(156,163,175,0.18)', 'fas fa-bus', 24);
 
     // Stop marker icons (small Google-Maps-dot style)
     const stopIcon = L.divIcon({
